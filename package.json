@@ -1,33 +1,29 @@
 {
   "name": "humblebundle-ebook-downloader",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "license": "Unlicense",
   "main": "index.js",
   "bin": {
     "humblebundle-ebook-downloader": "index.js"
   },
-  "scripts": {
-    "test": "standard"
-  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/DMarby/humblebundle-ebook-downloader.git"
+    "url": "https://github.com/aetherwraith/humblebundle-ebook-downloader.git"
   },
-  "author": "David Marby <david@dmarby.se> http://dmarby.se",
+  "author": "Michael Hughes <aetherwraith@gmail.com>",
   "dependencies": {
-    "async": "^2.6.2",
-    "bottleneck": "^2.17.1",
-    "breeze": "^1.2.2",
-    "colors": "^1.3.3",
-    "commander": "^2.19.0",
-    "inquirer": "^6.2.2",
+    "colors": "^1.4.0",
+    "commander": "^7.1.0",
+    "hasha": "^5.2.2",
     "mkdirp": "^1.0.4",
-    "nasa-keypath": "0.0.1",
-    "nightmare": "^3.0.1",
-    "request": "^2.88.0",
-    "sanitize-filename": "^1.6.1"
+    "p-map": "^4.0.0",
+    "p-queue": "^6.6.2",
+    "sanitize-filename": "^1.6.3"
   },
   "devDependencies": {
-    "standard": "^12.0.1"
+    "eslint": "^7.22.0",
+    "eslint-config-prettier": "^8.1.0",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-prettier": "^3.3.1"
   }
 }
