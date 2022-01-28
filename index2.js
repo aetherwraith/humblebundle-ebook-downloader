@@ -113,6 +113,8 @@ if (!existsSync(cacheFilePath)) {
   checksumCache = JSON.parse(readFileSync(cacheFilePath));
 }
 
+let cacheHits = 0;
+
 console.log(
   `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
 );
@@ -315,12 +317,11 @@ function getExtension(format) {
   }
 }
 
-// set downloaded to false by default here!
 async function checkSignatureMatch(
   filePath,
   download,
   cacheKey,
-  downloaded = true
+  downloaded = false
 ) {
   const algorithm = download.sha1 ? 'sha1' : 'md5';
   const hashToVerify = download[algorithm];
@@ -335,6 +336,7 @@ async function checkSignatureMatch(
     checksumCache[cacheKey][algorithm] &&
     !downloaded
   ) {
+    cacheHits++;
     hash = checksumCache[cacheKey][algorithm];
   } else {
     hash = await hasha.fromFile(filePath, { algorithm });
@@ -398,7 +400,7 @@ async function downloadEbook(download) {
   if (
     existsSync(filePath) &&
     (await fileCheckQueue.add(() =>
-      checkSignatureMatch(filePath, download.download)
+      checkSignatureMatch(filePath, download.download, download.cacheKey)
     ))
   ) {
     console.log(
@@ -443,6 +445,15 @@ async function downloadEbooks(downloads) {
     }
     totalDownloads = downloads.length;
     if (options.checksumsUpdate) {
+      fileCheckQueue.on('active', () => {
+        console.log(
+          `FileChecker working on item #${colors.blue(
+            countFileChecks
+          )}.  Size: ${colors.blue(
+            fileCheckQueue.size
+          )}  Pending: ${colors.blue(fileCheckQueue.pending)}`
+        );
+      });
       console.log('Updating checksums');
       downloads.forEach(async download => {
         const downloadPath = path.resolve(
@@ -483,7 +494,7 @@ async function downloadEbooks(downloads) {
       console.log(
         `${colors.green(
           'Done!'
-        )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
+        )} Downloaded: ${countDownloads}, checked: ${countFileChecks}, cache hits: ${cacheHits}`
       );
     }
     await fileCheckQueue.onIdle();
