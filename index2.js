@@ -113,6 +113,11 @@ if (!existsSync(cacheFilePath)) {
   checksumCache = JSON.parse(readFileSync(cacheFilePath));
 }
 
+process.on('SIGINT', () => {
+  writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
+  process.exit();
+});
+
 let cacheHits = 0;
 
 console.log(
