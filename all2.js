@@ -79,23 +79,23 @@ const downloadPromises = [];
 let countFileChecks = 0;
 fileCheckQueue.on('active', () => {
   countFileChecks++;
-  // console.log(
-  //   `FileChecker working on item #${colors.blue(
-  //     countFileChecks
-  //   )}.  Size: ${colors.blue(fileCheckQueue.size)}  Pending: ${colors.blue(
-  //     fileCheckQueue.pending
-  //   )}`
-  // );
+  console.log(
+    `FileChecker working on item #${colors.blue(
+      countFileChecks
+    )}.  Size: ${colors.blue(fileCheckQueue.size)}  Pending: ${colors.blue(
+      fileCheckQueue.pending
+    )}`
+  );
 });
 
 let countDownloads = 0;
 downloadQueue.on('active', () => {
   countDownloads++;
-  // console.log(
-  //   `Downloading item #${colors.cyan(countDownloads)}.  Size: ${colors.cyan(
-  //     downloadQueue.size
-  //   )}  Pending: ${colors.cyan(downloadQueue.pending)}`
-  // );
+  console.log(
+    `Downloading item #${colors.cyan(countDownloads)}.  Size: ${colors.cyan(
+      downloadQueue.size
+    )}  Pending: ${colors.cyan(downloadQueue.pending)}`
+  );
 });
 
 // load cache file of checksums
@@ -271,12 +271,12 @@ async function doDownload(filePath, download) {
     })
   );
 
-  await checkSignatureMatch(
+  fileCheckQueue.add(() => checkSignatureMatch(
     filePath,
     download.download,
     download.cacheKey,
     true
-  );
+  ));
 
   console.log(
     'Downloaded %s (%s) (%s)... (%s/%s)',
@@ -392,5 +392,9 @@ async function downloadItems(downloads) {
       )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
     );
     console.log(err);
+    await fileCheckQueue.onIdle();
+    writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
   }
+  await fileCheckQueue.onIdle();
+  writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
 })();
