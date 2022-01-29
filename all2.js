@@ -116,6 +116,11 @@ console.log(
   `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
 );
 
+process.on('SIGINT', () => {
+  writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
+  process.exit();
+});
+
 async function getAllOrderInfo(gameKeys) {
   console.log(`Fetching order information for ${gameKeys.length} bundles`);
   return PMap(gameKeys, getOrderInfo, { concurrency: options.downloadLimit });
@@ -271,12 +276,9 @@ async function doDownload(filePath, download) {
     })
   );
 
-  fileCheckQueue.add(() => checkSignatureMatch(
-    filePath,
-    download.download,
-    download.cacheKey,
-    true
-  ));
+  fileCheckQueue.add(() =>
+    checkSignatureMatch(filePath, download.download, download.cacheKey, true)
+  );
 
   console.log(
     'Downloaded %s (%s) (%s)... (%s/%s)',
