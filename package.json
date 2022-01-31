@@ -13,8 +13,9 @@
   },
   "author": "Michael Hughes <aetherwraith@gmail.com>",
   "dependencies": {
+    "cli-progress": "^3.10.0",
     "colors": "^1.4.0",
-    "commander": "^8.3.0",
+    "commander": "^9.0.0",
     "hasha": "^5.2.2",
     "mkdirp": "^1.0.4",
     "p-map": "^5.3.0",
@@ -22,7 +23,7 @@
     "sanitize-filename": "^1.6.3"
   },
   "devDependencies": {
-    "eslint": "^8.7.0",
+    "eslint": "^8.8.0",
     "eslint-config-prettier": "^8.3.0",
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-prettier": "^4.0.0",

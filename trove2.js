@@ -3,7 +3,7 @@
 import PQueue from 'p-queue';
 import http2 from 'http2';
 import https from 'https';
-import commander from 'commander';
+import { program as commander } from 'commander';
 import colors from 'colors';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import hasha from 'hasha';
@@ -11,6 +11,7 @@ import mkdirp from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'path';
 import { createWriteStream } from 'fs';
+import cliProgress from 'cli-progress';
 
 const packageInfo = JSON.parse(readFileSync('./package.json'));
 
@@ -66,25 +67,26 @@ const downloadQueue = new PQueue({ concurrency: options.downloadLimit });
 const downloadPromises = [];
 
 let countFileChecks = 0;
-fileCheckQueue.on('active', () => {
+let countDownloads = 0;
+
+fileCheckQueue.on('add', () => {
   countFileChecks++;
-  // console.log(
-  //   `FileChecker working on item #${colors.blue(
-  //     countFileChecks
-  //   )}.  Size: ${colors.blue(fileCheckQueue.size)}  Pending: ${colors.blue(
-  //     fileCheckQueue.pending
-  //   )}`
-  // );
+  const total = bars.checkq.total;
+  bars.checkq.setTotal(total + 1);
 });
 
-let countDownloads = 0;
-downloadQueue.on('active', () => {
+fileCheckQueue.on('completed', () => {
+  bars.checkq.increment();
+});
+
+downloadQueue.on('add', () => {
   countDownloads++;
-  // console.log(
-  //   `Downloading item #${colors.cyan(countDownloads)}.  Size: ${colors.cyan(
-  //     downloadQueue.size
-  //   )}  Pending: ${colors.cyan(downloadQueue.pending)}`
-  // );
+  const total = bars.downloadq.total;
+  bars.downloadq.setTotal(total + 1);
+});
+
+downloadQueue.on('completed', () => {
+  bars.downloadq.increment();
 });
 
 // load cache file of checksums
@@ -103,12 +105,26 @@ if (!existsSync(cacheFilePath)) {
 
 process.on('SIGINT', () => {
   writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
+  progress.stop();
   process.exit();
 });
 
 console.log(
   `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
 );
+
+const progress = new cliProgress.MultiBar(
+  {
+    format:
+      ' {bar} | {value}/{total} | {duration_formatted}/{eta_formatted} | "{file}" ',
+    hideCursor: true,
+    clearOnComplete: true,
+    stopOnComplete: true,
+  },
+  cliProgress.Presets.shades_classic
+);
+
+const bars = {};
 
 async function getAllTroveInfo() {
   const client = http2.connect('https://www.humblebundle.com');
@@ -200,22 +216,20 @@ async function filterTroves(troves) {
   let downloads = [];
   troves.forEach(trove => {
     Object.values(trove.downloads).forEach(download => {
-      console.log(
-        `Adding: ${colors.yellow(trove['human-name'])} (${colors.blue(
-          download.machine_name
-        )})`
-      );
       if (download.url) {
         const fileName = path.basename(download.url.web);
         const cacheKey = path.join(
           sanitizeFilename(trove['human-name']),
           sanitizeFilename(fileName)
         );
-        downloads.push({
-          download: download,
-          name: trove['human-name'],
-          cacheKey,
-        });
+        const existing = downloads.find(elem => elem.cacheKey === cacheKey);
+        if (!existing) {
+          downloads.push({
+            download: download,
+            name: trove['human-name'],
+            cacheKey,
+          });
+        }
       }
     });
   });
@@ -231,12 +245,6 @@ async function checkSignatureMatch(
 ) {
   const algorithm = download.sha1 ? 'sha1' : 'md5';
   const hashToVerify = download[algorithm];
-
-  console.log(
-    `Checking File signature ${colors.yellow(algorithm)} for ${colors.green(
-      filePath
-    )}`
-  );
 
   var hash = '';
   if (
@@ -255,15 +263,6 @@ async function checkSignatureMatch(
     }
   }
   const matched = hash === hashToVerify;
-  if (!matched && !downloaded) {
-    console.log(
-      `File signature ${colors.yellow(
-        algorithm
-      )} did not match for ${colors.red(filePath)}: ${colors.blue(
-        hashToVerify
-      )} != ${colors.cyan(hash)}`
-    );
-  }
   return matched;
 }
 
@@ -271,27 +270,27 @@ async function doDownload(filePath, download) {
   const url = await getTroveDownloadUrl(download);
   await new Promise(done =>
     https.get(url, function (res) {
+      const size = Number(res.headers['content-length']);
+      var got = 0;
+      bars[filePath] = progress.create(100, 0, {
+        file: filePath,
+      });
+      res.on('data', data => {
+        got += Buffer.byteLength(data);
+        bars[filePath].update(Math.round((got / size) * 100));
+      });
       res.pipe(createWriteStream(filePath));
-      res.on('end', () => done());
-      res.on('error', err => console.log(`eeeeeeekkkkkkkkk: ${filePath}`));
+      res.on('end', () => {
+        progress.remove(bars[filePath]);
+        done();
+      });
     })
   );
-
-  await checkSignatureMatch(
-    filePath,
-    download.download,
-    download.cacheKey,
-    true
+  fileCheckQueue.add(() =>
+    checkSignatureMatch(filePath, download.download, download.cacheKey, true)
   );
-
-  console.log(
-    'Downloaded %s (%s) (%s)... (%s/%s)',
-    download.name,
-    download.download.machine_name,
-    download.download.size,
-    colors.yellow(++doneDownloads),
-    colors.yellow(totalDownloads)
-  );
+  doneDownloads++;
+  bars.downloads.increment();
 }
 
 async function downloadItem(download) {
@@ -311,14 +310,8 @@ async function downloadItem(download) {
       checkSignatureMatch(filePath, download.download, download.cacheKey)
     ))
   ) {
-    console.log(
-      'Skipped downloading of %s (%s) (%s) - already exists... (%s/%s)',
-      download.name,
-      download.download.machine_name,
-      download.download.size,
-      colors.yellow(++doneDownloads),
-      colors.yellow(totalDownloads)
-    );
+    doneDownloads++;
+    bars.downloads.increment();
   } else {
     downloadPromises.push(
       downloadQueue.add(() => doDownload(filePath, download))
@@ -340,6 +333,7 @@ async function downloadItems(downloads) {
     const downloads = await filterTroves(trove);
     downloads.sort((a, b) => a.name.localeCompare(b.name));
     totalDownloads = downloads.length;
+    bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
     if (options.checksumsUpdate) {
       console.log('Updating checksums');
       downloads.forEach(async download => {
@@ -362,10 +356,15 @@ async function downloadItems(downloads) {
         }
       });
       await fileCheckQueue.onIdle();
+      progress.stop();
       console.log(
         `${colors.green('Checked:')} ${colors.blue(countFileChecks)}`
       );
     } else {
+      bars.downloads = progress.create(totalDownloads, 0, {
+        file: 'Downloads',
+      });
+      bars.downloadq = progress.create(0, 0, { file: 'Download Queue' });
       await downloadItems(downloads);
       while (doneDownloads < totalDownloads) {
         await new Promise(resolve => {
@@ -375,6 +374,7 @@ async function downloadItems(downloads) {
         await downloadQueue.onIdle();
         await Promise.all(downloadPromises);
       }
+      progress.stop();
       console.log(
         `${colors.green(
           'Done!'
