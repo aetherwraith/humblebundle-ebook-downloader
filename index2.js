@@ -4,7 +4,7 @@ import PMap from 'p-map';
 import PQueue from 'p-queue';
 import http2 from 'http2';
 import https from 'https';
-import commander from 'commander';
+import { program as commander } from 'commander';
 import colors from 'colors';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import hasha from 'hasha';
@@ -12,6 +12,7 @@ import mkdirp from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'path';
 import { createWriteStream } from 'fs';
+import cliProgress from 'cli-progress';
 
 const packageInfo = JSON.parse(readFileSync('./package.json'));
 
@@ -78,25 +79,26 @@ const downloadQueue = new PQueue({ concurrency: options.downloadLimit });
 const downloadPromises = [];
 
 let countFileChecks = 0;
-fileCheckQueue.on('active', () => {
+let countDownloads = 0;
+
+fileCheckQueue.on('add', () => {
   countFileChecks++;
-  // console.log(
-  //   `FileChecker working on item #${colors.blue(
-  //     ++countFileChecks
-  //   )}.  Size: ${colors.blue(fileCheckQueue.size)}  Pending: ${colors.blue(
-  //     fileCheckQueue.pending
-  //   )}`
-  // );
+  const total = bars.checkq.total;
+  bars.checkq.setTotal(total + 1);
 });
 
-let countDownloads = 0;
-downloadQueue.on('active', () => {
+fileCheckQueue.on('completed', () => {
+  bars.checkq.increment();
+});
+
+downloadQueue.on('add', () => {
   countDownloads++;
-  // console.log(
-  //   `Downloading item #${colors.cyan(++countDownloads)}.  Size: ${colors.cyan(
-  //     downloadQueue.size
-  //   )}  Pending: ${colors.cyan(downloadQueue.pending)}`
-  // );
+  const total = bars.downloadq.total;
+  bars.downloadq.setTotal(total + 1);
+});
+
+downloadQueue.on('completed', () => {
+  bars.downloadq.increment();
 });
 
 // load cache file of checksums
@@ -115,6 +117,7 @@ if (!existsSync(cacheFilePath)) {
 
 process.on('SIGINT', () => {
   writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
+  progress.stop();
   process.exit();
 });
 
@@ -123,6 +126,19 @@ let cacheHits = 0;
 console.log(
   `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
 );
+
+const progress = new cliProgress.MultiBar(
+  {
+    format:
+      ' {bar} | {value}/{total} | {duration_formatted}/{eta_formatted} | "{file}" ',
+    hideCursor: true,
+    clearOnComplete: true,
+    stopOnComplete: true,
+  },
+  cliProgress.Presets.shades_classic
+);
+
+const bars = {};
 
 function normalizeFormat(format) {
   switch (format.toLowerCase()) {
@@ -140,6 +156,7 @@ function normalizeFormat(format) {
 
 async function getAllOrderInfo(gameKeys) {
   console.log(`Fetching order information for ${gameKeys.length} bundles`);
+  bars.bundles = progress.create(gameKeys.length, 0, { file: 'Bundles' });
   return PMap(gameKeys, getOrderInfo, { concurrency: options.downloadLimit });
 }
 
@@ -166,11 +183,12 @@ async function getOrderInfo(gameKey) {
       resolve();
     })
   );
-  console.log(
-    'Fetched bundle information... (%s/%s)',
-    colors.yellow(++doneBundles),
-    colors.yellow(totalBundles)
-  );
+
+  bars.bundles.increment();
+
+  if (!bars.bundles.isActive) {
+    progress.remove(bars.bundles);
+  }
 
   return JSON.parse(data);
 }
@@ -251,17 +269,6 @@ async function filterEbooks(ebookBundles) {
                 !existing ||
                 (date > existing.date && struct.name === existing.download.name)
               ) {
-                console.log(
-                  `Adding: ${colors.yellow(
-                    subproduct.human_name
-                  )} from ${colors.blue(
-                    bundle.product.human_name
-                  )} in ${colors.yellow(normalizeFormat(struct.name))} ${
-                    existing
-                      ? `\n replacing ${existing.bundle}, ${existing.date} with ${bundle.product.human_name}, ${date}`
-                      : ''
-                  }`
-                );
                 if (existing) {
                   const downloadPath = path.resolve(
                     options.downloadFolder,
@@ -278,9 +285,6 @@ async function filterEbooks(ebookBundles) {
                     existsSync(filePath) &&
                     existing.bundle !== bundle.product.human_name
                   ) {
-                    console.log(
-                      `Deleting existing file ${colors.blue(filePath)}`
-                    );
                     unlinkSync(filePath);
                   }
                   downloads = downloads.filter(
@@ -330,11 +334,6 @@ async function checkSignatureMatch(
 ) {
   const algorithm = download.sha1 ? 'sha1' : 'md5';
   const hashToVerify = download[algorithm];
-  console.log(
-    `Checking File signature ${colors.yellow(algorithm)} for ${colors.green(
-      filePath
-    )}`
-  );
   var hash = '';
   if (
     checksumCache[cacheKey] &&
@@ -353,39 +352,31 @@ async function checkSignatureMatch(
     }
   }
   const matched = hash === hashToVerify;
-  if (!matched && !downloaded) {
-    console.log(
-      `File signature ${colors.yellow(
-        algorithm
-      )} did not match for ${colors.red(filePath)}: ${colors.blue(
-        hashToVerify
-      )} != ${colors.cyan(hash)}`
-    );
-  }
   return matched;
 }
 
 async function doDownload(filePath, download) {
   await new Promise(done =>
     https.get(download.download.url.web, function (res) {
+      const size = Number(res.headers['content-length']);
+      var got = 0;
+      bars[filePath] = progress.create(100, 0, { file: filePath });
+      res.on('data', data => {
+        got += Buffer.byteLength(data);
+        bars[filePath].update(Math.round((got / size) * 100));
+      });
       res.pipe(createWriteStream(filePath));
-      res.on('end', () => done());
+      res.on('end', () => {
+        progress.remove(bars[filePath]);
+        done();
+      });
     })
   );
-  await checkSignatureMatch(
-    filePath,
-    download.download,
-    download.cacheKey,
-    true
+  fileCheckQueue.add(() =>
+    checkSignatureMatch(filePath, download.download, download.cacheKey, true)
   );
-  console.log(
-    'Downloaded %s (%s) (%s)... (%s/%s)',
-    download.name,
-    normalizeFormat(download.download.name),
-    download.download.human_size,
-    colors.yellow(++doneDownloads),
-    colors.yellow(totalDownloads)
-  );
+  doneDownloads++;
+  bars.downloads.increment();
 }
 
 async function downloadEbook(download) {
@@ -408,14 +399,8 @@ async function downloadEbook(download) {
       checkSignatureMatch(filePath, download.download, download.cacheKey)
     ))
   ) {
-    console.log(
-      'Skipped downloading of %s (%s) (%s) - already exists... (%s/%s)',
-      download.name,
-      normalizeFormat(download.download.name),
-      download.download.human_size,
-      colors.yellow(++doneDownloads),
-      colors.yellow(totalDownloads)
-    );
+    doneDownloads++;
+    bars.downloads.increment();
   } else {
     downloadPromises.push(
       downloadQueue.add(() => doDownload(filePath, download))
@@ -449,16 +434,8 @@ async function downloadEbooks(downloads) {
       process.exit('Something went wrong and I found some duplicates');
     }
     totalDownloads = downloads.length;
+    bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
     if (options.checksumsUpdate) {
-      fileCheckQueue.on('active', () => {
-        console.log(
-          `FileChecker working on item #${colors.blue(
-            countFileChecks
-          )}.  Size: ${colors.blue(
-            fileCheckQueue.size
-          )}  Pending: ${colors.blue(fileCheckQueue.pending)}`
-        );
-      });
       console.log('Updating checksums');
       downloads.forEach(async download => {
         const downloadPath = path.resolve(
@@ -483,10 +460,15 @@ async function downloadEbooks(downloads) {
         }
       });
       await fileCheckQueue.onIdle();
+      progress.stop();
       console.log(
         `${colors.green('Checked:')} ${colors.blue(countFileChecks)}`
       );
     } else {
+      bars.downloads = progress.create(totalDownloads, 0, {
+        file: 'Downloads',
+      });
+      bars.downloadq = progress.create(0, 0, { file: 'Download Queue' });
       await downloadEbooks(downloads);
       while (doneDownloads < totalDownloads) {
         await new Promise(resolve => {
@@ -496,6 +478,7 @@ async function downloadEbooks(downloads) {
         await downloadQueue.onIdle();
         await Promise.all(downloadPromises);
       }
+      progress.stop();
       console.log(
         `${colors.green(
           'Done!'
