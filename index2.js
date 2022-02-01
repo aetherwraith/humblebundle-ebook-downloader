@@ -262,7 +262,7 @@ async function filterEbooks(ebookBundles) {
               }
               const uploaded_at = new Date(struct.uploaded_at);
               if (uploaded_at > date) date = uploaded_at;
-              const existing = downloads.find(
+              const existing = downloads.some(
                 elem => elem.name === subproduct.human_name
               );
               if (
