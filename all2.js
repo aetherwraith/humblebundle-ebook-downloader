@@ -164,11 +164,10 @@ async function getOrderInfo(gameKey) {
 
   await new Promise(resolve =>
     req.on('close', () => {
+      bars.bundles.increment();
       resolve();
     })
   );
-
-  bars.bundles.increment();
 
   return JSON.parse(data);
 }
@@ -221,7 +220,17 @@ async function filterBundles(bundles) {
               sanitizeFilename(subproduct.human_name),
               sanitizeFilename(fileName)
             );
-            const existing = downloads.find(elem => elem.cacheKey === cacheKey);
+            const existing = downloads.some(elem => {
+              // const elemUrl = new URL(elem.download.url.web);
+              // const elemFileName = path.basename(elemUrl.pathname);
+              // return (
+              //   elem.cacheKey === cacheKey ||
+              //   (elemFileName === fileName &&
+              //     elem.download.sha1 === struct.sha1 &&
+              //     elem.download.md5 === struct.md5)
+              // );
+              return elem.cacheKey === cacheKey;
+            });
             if (!existing) {
               downloads.push({
                 bundle: bundle.product.human_name,
@@ -256,12 +265,10 @@ async function checkSignatureMatch(
     hash = checksumCache[cacheKey][algorithm];
   } else {
     hash = await hasha.fromFile(filePath, { algorithm });
-    if (downloaded) {
-      if (!checksumCache[cacheKey]) {
-        checksumCache[cacheKey] = {};
-      }
-      checksumCache[cacheKey][algorithm] = hash;
+    if (!checksumCache[cacheKey]) {
+      checksumCache[cacheKey] = {};
     }
+    checksumCache[cacheKey][algorithm] = hash;
   }
   const matched = hash === hashToVerify;
   return matched;
@@ -368,7 +375,9 @@ async function downloadItems(downloads) {
       await fileCheckQueue.onIdle();
       progress.stop();
       console.log(
-        `${colors.green('Checked:')} ${colors.blue(countFileChecks)}`
+        `${colors.green('Checked:')} ${colors.blue(
+          countFileChecks
+        )} of ${colors.magenta(totalDownloads)}`
       );
     } else {
       bars.downloads = progress.create(totalDownloads, 0, {
