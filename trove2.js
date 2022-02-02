@@ -222,7 +222,7 @@ async function filterTroves(troves) {
           sanitizeFilename(trove['human-name']),
           sanitizeFilename(fileName)
         );
-        const existing = downloads.find(elem => elem.cacheKey === cacheKey);
+        const existing = downloads.some(elem => elem.cacheKey === cacheKey);
         if (!existing) {
           downloads.push({
             download: download,
