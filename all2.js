@@ -6,8 +6,15 @@ import http2 from 'http2';
 import https from 'https';
 import { program as commander } from 'commander';
 import colors from 'colors';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
-import hasha from 'hasha';
+import {
+  existsSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  createReadStream,
+  statSync,
+} from 'fs';
+import { createHash } from 'crypto';
 import mkdirp from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'path';
@@ -127,6 +134,7 @@ const progress = new cliProgress.MultiBar(
     // stopOnComplete: true,
     etaBuffer: 25000,
     etaAsynchronousUpdate: true,
+    autopadding: true,
   },
   cliProgress.Presets.shades_classic
 );
@@ -238,53 +246,140 @@ async function filterBundles(bundles) {
   return downloads;
 }
 
-// set downloaded to false by default here!
+// async function filterBundles(bundles) {
+//   console.log(
+//     `${colors.yellow(bundles.length)} bundles containing downloadable items`
+//   );
+//   let downloads = [];
+//   bundles.forEach(bundle => {
+//     bundle.subproducts.forEach(subproduct => {
+//       subproduct.downloads.forEach(download => {
+//         download.download_struct.forEach(struct => {
+//           if (struct.url) {
+//             const url = new URL(struct.url.web);
+//             const fileName = path.basename(url.pathname);
+//             const cacheKey = path.join(
+//               sanitizeFilename(bundle.product.human_name),
+//               sanitizeFilename(subproduct.human_name),
+//               sanitizeFilename(fileName)
+//             );
+//             const existing = downloads.some(elem => {
+//               const elemUrl = new URL(elem.download.url.web);
+//               const elemFileName = path.basename(elemUrl.pathname);
+//               return (
+//                 elem.cacheKey === cacheKey ||
+//                 (elemFileName === fileName &&
+//                   elem.download.sha1 === struct.sha1 &&
+//                   elem.download.md5 === struct.md5)
+//               );
+//             });
+//             if (!existing) {
+//               downloads.push({
+//                 bundle: bundle.product.human_name,
+//                 download: struct,
+//                 name: subproduct.human_name,
+//                 cacheKey,
+//               });
+//             } else {
+//               const downloadPath = path.resolve(
+//                 options.downloadFolder,
+//                 sanitizeFilename(bundle.product.human_name),
+//                 sanitizeFilename(subproduct.human_name)
+//               );
+
+//               const url = new URL(struct.url.web);
+//               const fileName = path.basename(url.pathname);
+
+//               const filePath = path.resolve(
+//                 downloadPath,
+//                 sanitizeFilename(fileName)
+//               );
+//               if (existsSync(filePath)) {
+//                 unlinkSync(filePath);
+//               }
+//             }
+//           }
+//         });
+//       });
+//     });
+//   });
+//   return downloads;
+// }
+
+function fileHash(filename, cacheKey) {
+  return new Promise((resolve, reject) => {
+    // Algorithm depends on availability of OpenSSL on platform
+    // Another algorithms: 'sha1', 'md5', 'sha256', 'sha512' ...
+    let shasum = createHash('sha1');
+    let md5sum = createHash('md5');
+    let size = statSync(filename).size;
+    bars[cacheKey] = progress.create(size, 0, {
+      file: `Hashing: ${cacheKey}`,
+    });
+    try {
+      let s = createReadStream(filename);
+      s.on('data', function (data) {
+        shasum.update(data);
+        md5sum.update(data);
+        bars[cacheKey].increment(Buffer.byteLength(data));
+      });
+      // making digest
+      s.on('end', function () {
+        const hash = { sha1: shasum.digest('hex'), md5: md5sum.digest('hex') };
+        progress.remove(bars[cacheKey]);
+        bars.delete(cacheKey);
+        return resolve(hash);
+      });
+    } catch (error) {
+      return reject('calc fail');
+    }
+  });
+}
+
 async function checkSignatureMatch(
   filePath,
   download,
   cacheKey,
   downloaded = false
 ) {
-  const algorithm = download.sha1 ? 'sha1' : 'md5';
-  const hashToVerify = download[algorithm];
   var hash = '';
-  if (
-    checksumCache[cacheKey] &&
-    checksumCache[cacheKey][algorithm] &&
-    !downloaded
-  ) {
-    hash = checksumCache[cacheKey][algorithm];
+  if (checksumCache[cacheKey] && !downloaded) {
+    hash = checksumCache[cacheKey];
   } else {
-    hash = await hasha.fromFile(filePath, { algorithm });
-    if (downloaded) {
-      if (!checksumCache[cacheKey]) {
-        checksumCache[cacheKey] = {};
-      }
-      checksumCache[cacheKey][algorithm] = hash;
-    }
+    hash = await fileHash(filePath, cacheKey);
+    checksumCache[cacheKey] = hash;
   }
-  const matched = hash === hashToVerify;
+  const matched =
+    (download.sha1 && download.sha1 === hash.sha1) ||
+    (download.md5 && download.md5 === hash.md5);
   return matched;
 }
 
-async function doDownload(filePath, download) {
-  await new Promise(done =>
-    https.get(download.download.url.web, function (res) {
-      const size = Number(res.headers['content-length']);
-      bars[download.cacheKey] = progress.create(size, 0, {
-        file: download.cacheKey,
-      });
-      res.on('data', data => {
-        bars[download.cacheKey].increment(Buffer.byteLength(data));
-      });
-      res.pipe(createWriteStream(filePath));
-      res.on('end', () => {
-        progress.remove(bars[download.cacheKey]);
-        bars.delete(download.cacheKey);
-        done();
-      });
-    })
-  );
+async function doDownload(filePath, download, retries = 0) {
+  await new Promise(done => {
+    const req = https.get(
+      download.download.url.web,
+      { timeout: 60000 },
+      async function (res) {
+        const size = Number(res.headers['content-length']);
+        let got = 0;
+        bars[download.cacheKey] = progress.create(size, 0, {
+          file: download.cacheKey,
+        });
+        res.on('data', data => {
+          got += Buffer.byteLength(data);
+          bars[download.cacheKey].increment(Buffer.byteLength(data));
+        });
+        res.pipe(createWriteStream(filePath));
+        res.on('end', () => {
+          progress.remove(bars[download.cacheKey]);
+          bars.delete(download.cacheKey);
+          done();
+        });
+        res.on('timeout', () => req.destroy());
+      }
+    );
+  });
   fileCheckQueue.add(() =>
     checkSignatureMatch(filePath, download.download, download.cacheKey, true)
   );
@@ -335,6 +430,7 @@ async function downloadItems(downloads) {
     bars['bundles'] = progress.create(gameKeys.length, 0, { file: 'Bundles' });
     const bundles = await getAllOrderInfo(gameKeys);
     await client.close();
+    bars['bundles'].stop();
     progress.remove(bars['bundles']);
     bars.delete('bundles');
     const downloads = await filterBundles(bundles);
