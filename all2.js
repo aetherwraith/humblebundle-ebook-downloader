@@ -13,17 +13,17 @@ import {
   writeFileSync,
   createReadStream,
   statSync,
+  createWriteStream,
 } from 'fs';
 import { createHash } from 'crypto';
 import mkdirp from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'path';
-import { createWriteStream } from 'fs';
 import cliProgress from 'cli-progress';
 
 const packageInfo = JSON.parse(readFileSync('./package.json'));
 
-const userAgent = `Humblebundle-Ebook-Downloader/${packageInfo.version}`;
+const userAgent = `HumbleBundle-Ebook-Downloader/${packageInfo.version}`;
 
 function myParseInt(value, dummyPrevious) {
   const parsedValue = parseInt(value, 10);
@@ -35,7 +35,7 @@ function myParseInt(value, dummyPrevious) {
 
 commander
   .version(packageInfo.version)
-  .option(
+  .requiredOption(
     '-d, --download-folder <downloader_folder>',
     'Download folder',
     'download'
@@ -46,7 +46,7 @@ commander
     myParseInt,
     1
   )
-  .option(
+  .requiredOption(
     '--auth-token <auth-token>',
     'You must specify your authentication cookie from your browser (_simpleauth_sess)'
   )
@@ -54,6 +54,9 @@ commander
     '-c, --checksums-update',
     'Update the checksums from all downloaded files'
   )
+  .option('-a, --all', 'Download all available items')
+  .option('-t, --trove', 'Download trove items')
+  .option('-e, --ebooks', 'Download ebooks')
   .parse(process.argv);
 
 const options = commander.opts();
@@ -75,7 +78,6 @@ client.on('error', err => {
 });
 
 let totalBundles = 0;
-let doneBundles = 0;
 
 let totalDownloads = 0;
 let doneDownloads = 0;
@@ -113,7 +115,8 @@ const cacheFilePath = path.resolve(
   options.downloadFolder,
   sanitizeFilename(cacheFileName)
 );
-var checksumCache = {};
+
+let checksumCache = {};
 if (!existsSync(cacheFilePath)) {
   mkdirp(options.downloadFolder);
   writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
@@ -130,8 +133,6 @@ const progress = new cliProgress.MultiBar(
     format:
       ' {bar} | {percentage}% | {duration_formatted}/{eta_formatted} | {value}/{total} | "{file}" ',
     hideCursor: true,
-    // clearOnComplete: true,
-    // stopOnComplete: true,
     etaBuffer: 25000,
     etaAsynchronousUpdate: true,
     autopadding: true,
@@ -231,13 +232,13 @@ async function filterBundles(bundles) {
             const existing = downloads.some(elem => {
               // const elemUrl = new URL(elem.download.url.web);
               // const elemFileName = path.basename(elemUrl.pathname);
-              // return (
-              //   elem.cacheKey === cacheKey ||
+              return elem.cacheKey === cacheKey;
+              // This dedupes files but takes a long time
+              //    ||
               //   (elemFileName === fileName &&
               //     elem.download.sha1 === struct.sha1 &&
               //     elem.download.md5 === struct.md5)
               // );
-              return elem.cacheKey === cacheKey;
             });
             if (!existing) {
               downloads.push({
@@ -247,6 +248,25 @@ async function filterBundles(bundles) {
                 cacheKey,
               });
             }
+            // This can be used to delete existing files if they are duplicates
+            // } else {
+            //   const downloadPath = path.resolve(
+            //     options.downloadFolder,
+            //     sanitizeFilename(bundle.product.human_name),
+            //     sanitizeFilename(subproduct.human_name)
+            //   );
+            //
+            //   const url = new URL(struct.url.web);
+            //   const fileName = path.basename(url.pathname);
+            //
+            //   const filePath = path.resolve(
+            //     downloadPath,
+            //     sanitizeFilename(fileName)
+            //   );
+            //   if (existsSync(filePath)) {
+            //     unlinkSync(filePath);
+            //   }
+            // }
           }
         });
       });
@@ -255,67 +275,7 @@ async function filterBundles(bundles) {
   return downloads;
 }
 
-// async function filterBundles(bundles) {
-//   console.log(
-//     `${colors.yellow(bundles.length)} bundles containing downloadable items`
-//   );
-//   let downloads = [];
-//   bundles.forEach(bundle => {
-//     bundle.subproducts.forEach(subproduct => {
-//       subproduct.downloads.forEach(download => {
-//         download.download_struct.forEach(struct => {
-//           if (struct.url) {
-//             const url = new URL(struct.url.web);
-//             const fileName = path.basename(url.pathname);
-//             const cacheKey = path.join(
-//               sanitizeFilename(bundle.product.human_name),
-//               sanitizeFilename(subproduct.human_name),
-//               sanitizeFilename(fileName)
-//             );
-//             const existing = downloads.some(elem => {
-//               const elemUrl = new URL(elem.download.url.web);
-//               const elemFileName = path.basename(elemUrl.pathname);
-//               return (
-//                 elem.cacheKey === cacheKey ||
-//                 (elemFileName === fileName &&
-//                   elem.download.sha1 === struct.sha1 &&
-//                   elem.download.md5 === struct.md5)
-//               );
-//             });
-//             if (!existing) {
-//               downloads.push({
-//                 bundle: bundle.product.human_name,
-//                 download: struct,
-//                 name: subproduct.human_name,
-//                 cacheKey,
-//               });
-//             } else {
-//               const downloadPath = path.resolve(
-//                 options.downloadFolder,
-//                 sanitizeFilename(bundle.product.human_name),
-//                 sanitizeFilename(subproduct.human_name)
-//               );
-
-//               const url = new URL(struct.url.web);
-//               const fileName = path.basename(url.pathname);
-
-//               const filePath = path.resolve(
-//                 downloadPath,
-//                 sanitizeFilename(fileName)
-//               );
-//               if (existsSync(filePath)) {
-//                 unlinkSync(filePath);
-//               }
-//             }
-//           }
-//         });
-//       });
-//     });
-//   });
-//   return downloads;
-// }
-
-function fileHash(filename, cacheKey) {
+async function fileHash(filename, cacheKey) {
   return new Promise((resolve, reject) => {
     // Algorithm depends on availability of OpenSSL on platform
     // Another algorithms: 'sha1', 'md5', 'sha256', 'sha512' ...
@@ -358,42 +318,66 @@ async function checkSignatureMatch(
     hash = await fileHash(filePath, cacheKey);
     checksumCache[cacheKey] = hash;
   }
-  const matched =
+  return (
     (download.sha1 && download.sha1 === hash.sha1) ||
-    (download.md5 && download.md5 === hash.md5);
-  return matched;
+    (download.md5 && download.md5 === hash.md5)
+  );
 }
 
 async function doDownload(filePath, download, retries = 0) {
-  await new Promise(done => {
+  await new Promise((done, reject) => {
     const req = https.get(
       download.download.url.web,
       { timeout: 60000 },
       async function (res) {
         const size = Number(res.headers['content-length']);
         let got = 0;
+        let shasum = createHash('sha1');
+        let md5sum = createHash('md5');
         bars[download.cacheKey] = progress.create(size, 0, {
           file: download.cacheKey,
         });
         res.on('data', data => {
+          shasum.update(data);
+          md5sum.update(data);
           got += Buffer.byteLength(data);
           bars[download.cacheKey].increment(Buffer.byteLength(data));
         });
         res.pipe(createWriteStream(filePath));
         res.on('end', () => {
+          const hash = {
+            sha1: shasum.digest('hex'),
+            md5: md5sum.digest('hex'),
+          };
+          checksumCache[download.cacheKey] = hash;
           progress.remove(bars[download.cacheKey]);
           bars.delete(download.cacheKey);
+          doneDownloads++;
+          bars.downloads.increment();
           done();
         });
         res.on('timeout', () => req.destroy());
+        res.on('error', () => {
+          req.destroy();
+          progress.remove(bars[download.cacheKey]);
+          bars.delete(download.cacheKey);
+          if (retries < 3) {
+            downloadPromises.push(
+              downloadQueue.add(() =>
+                doDownload(filePath, download, retries + 1)
+              )
+            );
+            done();
+          } else {
+            reject();
+          }
+        });
       }
     );
   });
-  fileCheckQueue.add(() =>
-    checkSignatureMatch(filePath, download.download, download.cacheKey, true)
-  );
-  doneDownloads++;
-  bars.downloads.increment();
+  // fileCheckQueue.add(() =>
+  //   checkSignatureMatch(filePath, download.download, download.cacheKey, true)
+  // );
 }
 
 async function downloadItem(download) {
@@ -442,13 +426,14 @@ async function downloadItems(downloads) {
     bars['bundles'].stop();
     progress.remove(bars['bundles']);
     bars.delete('bundles');
+    bundles.sort((a, b) => a.product.human_name.localeCompare(b.product.human_name));
     const downloads = await filterBundles(bundles);
     downloads.sort((a, b) => a.name.localeCompare(b.name));
     totalDownloads = downloads.length;
     if (options.checksumsUpdate) {
       console.log('Updating checksums');
       bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
-      downloads.forEach(async download => {
+      downloads.forEach(download => {
         const downloadPath = path.resolve(
           options.downloadFolder,
           sanitizeFilename(download.bundle),
