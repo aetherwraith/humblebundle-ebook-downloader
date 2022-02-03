@@ -230,15 +230,14 @@ async function filterBundles(bundles) {
               sanitizeFilename(fileName)
             );
             const existing = downloads.some(elem => {
-              // const elemUrl = new URL(elem.download.url.web);
-              // const elemFileName = path.basename(elemUrl.pathname);
-              return elem.cacheKey === cacheKey;
-              // This dedupes files but takes a long time
-              //    ||
-              //   (elemFileName === fileName &&
-              //     elem.download.sha1 === struct.sha1 &&
-              //     elem.download.md5 === struct.md5)
-              // );
+              const elemUrl = new URL(elem.download.url.web);
+              const elemFileName = path.basename(elemUrl.pathname);
+              return (
+                elem.cacheKey === cacheKey ||
+                (elemFileName === fileName &&
+                  elem.download.sha1 === struct.sha1 &&
+                  elem.download.md5 === struct.md5)
+              );
             });
             if (!existing) {
               downloads.push({
@@ -247,26 +246,24 @@ async function filterBundles(bundles) {
                 name: subproduct.human_name,
                 cacheKey,
               });
+            } else {
+              const downloadPath = path.resolve(
+                options.downloadFolder,
+                sanitizeFilename(bundle.product.human_name),
+                sanitizeFilename(subproduct.human_name)
+              );
+
+              const url = new URL(struct.url.web);
+              const fileName = path.basename(url.pathname);
+
+              const filePath = path.resolve(
+                downloadPath,
+                sanitizeFilename(fileName)
+              );
+              if (existsSync(filePath)) {
+                unlinkSync(filePath);
+              }
             }
-            // This can be used to delete existing files if they are duplicates
-            // } else {
-            //   const downloadPath = path.resolve(
-            //     options.downloadFolder,
-            //     sanitizeFilename(bundle.product.human_name),
-            //     sanitizeFilename(subproduct.human_name)
-            //   );
-            //
-            //   const url = new URL(struct.url.web);
-            //   const fileName = path.basename(url.pathname);
-            //
-            //   const filePath = path.resolve(
-            //     downloadPath,
-            //     sanitizeFilename(fileName)
-            //   );
-            //   if (existsSync(filePath)) {
-            //     unlinkSync(filePath);
-            //   }
-            // }
           }
         });
       });
@@ -403,11 +400,7 @@ async function downloadItem(download) {
     bars.downloads.increment();
   } else {
     downloadPromises.push(
-      downloadQueue.add(() =>
-        doDownload(filePath, download).catch(err =>
-          console.log(`${filePath} : ${err}`)
-        )
-      )
+      downloadQueue.add(() => doDownload(filePath, download))
     );
   }
 }
