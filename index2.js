@@ -6,12 +6,19 @@ import http2 from 'http2';
 import https from 'https';
 import { program as commander } from 'commander';
 import colors from 'colors';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
-import hasha from 'hasha';
+import {
+  existsSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  createReadStream,
+  statSync,
+  createWriteStream,
+} from 'fs';
+import { createHash } from 'crypto';
 import mkdirp from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'path';
-import { createWriteStream } from 'fs';
 import cliProgress from 'cli-progress';
 
 const packageInfo = JSON.parse(readFileSync('./package.json'));
@@ -138,7 +145,7 @@ const progress = new cliProgress.MultiBar(
   cliProgress.Presets.shades_classic
 );
 
-const bars = {};
+const bars = new Set();
 
 function normalizeFormat(format) {
   switch (format.toLowerCase()) {
@@ -326,57 +333,109 @@ function getExtension(format) {
   }
 }
 
+async function fileHash(filename, cacheKey) {
+  return new Promise((resolve, reject) => {
+    // Algorithm depends on availability of OpenSSL on platform
+    // Another algorithms: 'sha1', 'md5', 'sha256', 'sha512' ...
+    let shasum = createHash('sha1');
+    let md5sum = createHash('md5');
+    let size = statSync(filename).size;
+    bars[cacheKey] = progress.create(size, 0, {
+      file: `Hashing: ${cacheKey}`,
+    });
+    try {
+      let s = createReadStream(filename);
+      s.on('data', function (data) {
+        shasum.update(data);
+        md5sum.update(data);
+        bars[cacheKey].increment(Buffer.byteLength(data));
+      });
+      // making digest
+      s.on('end', function () {
+        const hash = { sha1: shasum.digest('hex'), md5: md5sum.digest('hex') };
+        progress.remove(bars[cacheKey]);
+        bars.delete(cacheKey);
+        return resolve(hash);
+      });
+    } catch (error) {
+      return reject('calc fail');
+    }
+  });
+}
+
 async function checkSignatureMatch(
   filePath,
   download,
   cacheKey,
   downloaded = false
 ) {
-  const algorithm = download.sha1 ? 'sha1' : 'md5';
-  const hashToVerify = download[algorithm];
   var hash = '';
-  if (
-    checksumCache[cacheKey] &&
-    checksumCache[cacheKey][algorithm] &&
-    !downloaded
-  ) {
-    cacheHits++;
-    hash = checksumCache[cacheKey][algorithm];
+  if (checksumCache[cacheKey] && !downloaded) {
+    hash = checksumCache[cacheKey];
   } else {
-    hash = await hasha.fromFile(filePath, { algorithm });
-    if (downloaded) {
-      if (!checksumCache[cacheKey]) {
-        checksumCache[cacheKey] = {};
-      }
-      checksumCache[cacheKey][algorithm] = hash;
-    }
+    hash = await fileHash(filePath, cacheKey);
+    checksumCache[cacheKey] = hash;
   }
-  const matched = hash === hashToVerify;
-  return matched;
+  return (
+    (download.sha1 && download.sha1 === hash.sha1) ||
+    (download.md5 && download.md5 === hash.md5)
+  );
 }
 
-async function doDownload(filePath, download) {
-  await new Promise(done =>
-    https.get(download.download.url.web, function (res) {
-      const size = Number(res.headers['content-length']);
-      var got = 0;
-      bars[filePath] = progress.create(100, 0, { file: filePath });
-      res.on('data', data => {
-        got += Buffer.byteLength(data);
-        bars[filePath].update(Math.round((got / size) * 100));
-      });
-      res.pipe(createWriteStream(filePath));
-      res.on('end', () => {
-        progress.remove(bars[filePath]);
-        done();
-      });
-    })
-  );
-  fileCheckQueue.add(() =>
-    checkSignatureMatch(filePath, download.download, download.cacheKey, true)
-  );
-  doneDownloads++;
-  bars.downloads.increment();
+async function doDownload(filePath, download, retries = 0) {
+  await new Promise((done, reject) => {
+    const req = https.get(
+      download.download.url.web,
+      { timeout: 60000 },
+      async function (res) {
+        const size = Number(res.headers['content-length']);
+        let got = 0;
+        let shasum = createHash('sha1');
+        let md5sum = createHash('md5');
+        bars[download.cacheKey] = progress.create(size, 0, {
+          file: download.cacheKey,
+        });
+        res.on('data', data => {
+          shasum.update(data);
+          md5sum.update(data);
+          got += Buffer.byteLength(data);
+          bars[download.cacheKey].increment(Buffer.byteLength(data));
+        });
+        res.pipe(createWriteStream(filePath));
+        res.on('end', () => {
+          const hash = {
+            sha1: shasum.digest('hex'),
+            md5: md5sum.digest('hex'),
+          };
+          checksumCache[download.cacheKey] = hash;
+          progress.remove(bars[download.cacheKey]);
+          bars.delete(download.cacheKey);
+          doneDownloads++;
+          bars.downloads.increment();
+          done();
+        });
+        res.on('timeout', () => req.destroy());
+        res.on('error', () => {
+          req.destroy();
+          progress.remove(bars[download.cacheKey]);
+          bars.delete(download.cacheKey);
+          if (retries < 300) {
+            downloadPromises.push(
+              downloadQueue.add(() =>
+                doDownload(filePath, download, retries + 1)
+              )
+            );
+            done();
+          } else {
+            reject(`${download.cacheKey}: Download failed ${retries} times`);
+          }
+        });
+      }
+    );
+  });
+  // fileCheckQueue.add(() =>
+  //   checkSignatureMatch(filePath, download.download, download.cacheKey, true)
+  // );
 }
 
 async function downloadEbook(download) {
