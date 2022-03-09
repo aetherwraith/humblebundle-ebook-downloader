@@ -1,16 +1,24 @@
 #!/usr/bin/env node
 
+import PMap from 'p-map';
 import PQueue from 'p-queue';
 import http2 from 'http2';
 import https from 'https';
 import { program as commander } from 'commander';
 import colors from 'colors';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
-import hasha from 'hasha';
+import {
+  existsSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  createReadStream,
+  statSync,
+  createWriteStream,
+} from 'fs';
+import { createHash } from 'crypto';
 import mkdirp from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'path';
-import { createWriteStream } from 'fs';
 import cliProgress from 'cli-progress';
 
 const packageInfo = JSON.parse(readFileSync('./package.json'));
@@ -95,19 +103,14 @@ const cacheFilePath = path.resolve(
   options.downloadFolder,
   sanitizeFilename(cacheFileName)
 );
-var checksumCache = {};
+
+let checksumCache = {};
 if (!existsSync(cacheFilePath)) {
   mkdirp(options.downloadFolder);
   writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
 } else {
   checksumCache = JSON.parse(readFileSync(cacheFilePath));
 }
-
-process.on('SIGINT', () => {
-  writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
-  progress.stop();
-  process.exit();
-});
 
 console.log(
   `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
@@ -116,15 +119,22 @@ console.log(
 const progress = new cliProgress.MultiBar(
   {
     format:
-      ' {bar} | {value}/{total} | {duration_formatted}/{eta_formatted} | "{file}" ',
+      ' {bar} | {percentage}% | {duration_formatted}/{eta_formatted} | {value}/{total} | "{file}" ',
     hideCursor: true,
-    clearOnComplete: true,
-    stopOnComplete: true,
+    etaBuffer: 25000,
+    etaAsynchronousUpdate: true,
+    autopadding: true,
   },
   cliProgress.Presets.shades_classic
 );
 
-const bars = {};
+const bars = new Set();
+
+process.on('SIGINT', () => {
+  writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
+  progress.stop();
+  process.exit();
+});
 
 async function getAllTroveInfo() {
   const client = http2.connect('https://www.humblebundle.com');
@@ -139,7 +149,7 @@ async function getAllTroveInfo() {
   while (!done) {
     const req = client.request({
       ...getRequestHeaders,
-      ':path': `/api/v1/trove/chunk?property=start&direction=desc&index=${page}`,
+      ':path': `/client/catalog?index=${page}`,
     });
     req.setEncoding('utf8');
     let data = '';
@@ -237,60 +247,101 @@ async function filterTroves(troves) {
   return downloads;
 }
 
+async function fileHash(filename, cacheKey) {
+  return new Promise((resolve, reject) => {
+    // Algorithm depends on availability of OpenSSL on platform
+    // Another algorithms: 'sha1', 'md5', 'sha256', 'sha512' ...
+    let shasum = createHash('sha1');
+    let md5sum = createHash('md5');
+    let size = statSync(filename).size;
+    bars[cacheKey] = progress.create(size, 0, {
+      file: `Hashing: ${cacheKey}`,
+    });
+    try {
+      let s = createReadStream(filename);
+      s.on('data', function (data) {
+        shasum.update(data);
+        md5sum.update(data);
+        bars[cacheKey].increment(Buffer.byteLength(data));
+      });
+      // making digest
+      s.on('end', function () {
+        const hash = { sha1: shasum.digest('hex'), md5: md5sum.digest('hex') };
+        progress.remove(bars[cacheKey]);
+        bars.delete(cacheKey);
+        return resolve(hash);
+      });
+    } catch (error) {
+      return reject('calc fail');
+    }
+  });
+}
+
 async function checkSignatureMatch(
   filePath,
   download,
   cacheKey,
   downloaded = false
 ) {
-  const algorithm = download.sha1 ? 'sha1' : 'md5';
-  const hashToVerify = download[algorithm];
-
   var hash = '';
-  if (
-    checksumCache[cacheKey] &&
-    checksumCache[cacheKey][algorithm] &&
-    !downloaded
-  ) {
-    hash = checksumCache[cacheKey][algorithm];
+  if (checksumCache[cacheKey] && !downloaded) {
+    hash = checksumCache[cacheKey];
   } else {
-    hash = await hasha.fromFile(filePath, { algorithm });
-    if (downloaded) {
-      if (!checksumCache[cacheKey]) {
-        checksumCache[cacheKey] = {};
-      }
-      checksumCache[cacheKey][algorithm] = hash;
-    }
+    hash = await fileHash(filePath, cacheKey);
+    checksumCache[cacheKey] = hash;
   }
-  const matched = hash === hashToVerify;
-  return matched;
+  return (
+    (download.sha1 && download.sha1 === hash.sha1) ||
+    (download.md5 && download.md5 === hash.md5)
+  );
 }
 
 async function doDownload(filePath, download) {
   const url = await getTroveDownloadUrl(download);
-  await new Promise(done =>
-    https.get(url, function (res) {
+  await new Promise((done, reject) => {
+    const req = https.get(url, { timeout: 60000 }, async function (res) {
       const size = Number(res.headers['content-length']);
-      var got = 0;
-      bars[filePath] = progress.create(100, 0, {
-        file: filePath,
+      let got = 0;
+      let shasum = createHash('sha1');
+      let md5sum = createHash('md5');
+      bars[download.cacheKey] = progress.create(size, 0, {
+        file: download.cacheKey,
       });
       res.on('data', data => {
+        shasum.update(data);
+        md5sum.update(data);
         got += Buffer.byteLength(data);
-        bars[filePath].update(Math.round((got / size) * 100));
+        bars[download.cacheKey].increment(Buffer.byteLength(data));
       });
       res.pipe(createWriteStream(filePath));
       res.on('end', () => {
-        progress.remove(bars[filePath]);
+        const hash = {
+          sha1: shasum.digest('hex'),
+          md5: md5sum.digest('hex'),
+        };
+        checksumCache[download.cacheKey] = hash;
+        progress.remove(bars[download.cacheKey]);
+        bars.delete(download.cacheKey);
+        doneDownloads++;
+        bars.downloads.increment();
         done();
       });
-    })
-  );
-  fileCheckQueue.add(() =>
-    checkSignatureMatch(filePath, download.download, download.cacheKey, true)
-  );
-  doneDownloads++;
-  bars.downloads.increment();
+      res.on('timeout', () => req.destroy());
+      res.on('error', () => {
+        req.destroy();
+        progress.remove(bars[download.cacheKey]);
+        bars.delete(download.cacheKey);
+        if (retries < 300) {
+          downloadPromises.push(
+            downloadQueue.add(() => doDownload(filePath, download, retries + 1))
+          );
+          done();
+        } else {
+          reject(`${download.cacheKey}: Download failed ${retries} times`);
+        }
+      });
+    });
+  });
 }
 
 async function downloadItem(download) {
@@ -314,7 +365,11 @@ async function downloadItem(download) {
     bars.downloads.increment();
   } else {
     downloadPromises.push(
-      downloadQueue.add(() => doDownload(filePath, download))
+      downloadQueue.add(() =>
+        doDownload(filePath, download).catch(err =>
+          console.log(`${filePath} : ${err}`)
+        )
+      )
     );
   }
 }
@@ -333,8 +388,8 @@ async function downloadItems(downloads) {
     const downloads = await filterTroves(trove);
     downloads.sort((a, b) => a.name.localeCompare(b.name));
     totalDownloads = downloads.length;
-    bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
     if (options.checksumsUpdate) {
+      bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
       console.log('Updating checksums');
       downloads.forEach(async download => {
         const downloadPath = path.resolve(
@@ -365,6 +420,7 @@ async function downloadItems(downloads) {
         file: 'Downloads',
       });
       bars.downloadq = progress.create(0, 0, { file: 'Download Queue' });
+      bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
       await downloadItems(downloads);
       while (doneDownloads < totalDownloads) {
         await new Promise(resolve => {
@@ -390,5 +446,9 @@ async function downloadItems(downloads) {
       )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
     );
     console.log(err);
+    await fileCheckQueue.onIdle();
+    writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
   }
+  await fileCheckQueue.onIdle();
+  writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
 })();
