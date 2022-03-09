@@ -75,9 +75,6 @@ client.on('error', err => {
   process.exit(err);
 });
 
-let totalBundles = 0;
-let doneBundles = 0;
-
 let totalDownloads = 0;
 let doneDownloads = 0;
 
@@ -372,6 +369,7 @@ async function checkSignatureMatch(
   var hash = '';
   if (checksumCache[cacheKey] && !downloaded) {
     hash = checksumCache[cacheKey];
+    cacheHits++;
   } else {
     hash = await fileHash(filePath, cacheKey);
     checksumCache[cacheKey] = hash;
@@ -478,7 +476,6 @@ async function downloadEbooks(downloads) {
 (async function () {
   try {
     const gameKeys = await fetchOrders();
-    totalBundles = gameKeys.length;
     const bundles = await getAllOrderInfo(gameKeys);
     await client.close();
     const ebookBundles = await filterBundles(bundles);
