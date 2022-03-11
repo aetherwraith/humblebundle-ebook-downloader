@@ -210,6 +210,8 @@ async function fetchOrders() {
   return JSON.parse(data);
 }
 
+let preFilteredDownloads = 0;
+
 async function filterBundles(bundles) {
   console.log(
     `${colors.yellow(bundles.length)} bundles containing downloadable items`
@@ -220,6 +222,7 @@ async function filterBundles(bundles) {
       subproduct.downloads.forEach(download => {
         download.download_struct.forEach(struct => {
           if (struct.url) {
+            preFilteredDownloads++;
             const url = new URL(struct.url.web);
             const fileName = path.basename(url.pathname);
             const cacheKey = path.join(
@@ -230,13 +233,18 @@ async function filterBundles(bundles) {
             const existing = downloads.some(elem => {
               // const elemUrl = new URL(elem.download.url.web);
               // const elemFileName = path.basename(elemUrl.pathname);
-              return elem.cacheKey === cacheKey;
+              // return elem.cacheKey === cacheKey;
               // This dedupes files but takes a long time
               //    ||
               //   (elemFileName === fileName &&
               //     elem.download.sha1 === struct.sha1 &&
               //     elem.download.md5 === struct.md5)
               // );
+              const found = elem.cacheKey === cacheKey;
+              if (found) {
+                console.log(`${colors.blue(cacheKey)} is duplicate of ${colors.cyan(elem.cacheKey)}`);
+              }
+              return found;
             });
             if (!existing) {
               downloads.push({
@@ -431,6 +439,10 @@ async function downloadItems(downloads) {
       a.product.human_name.localeCompare(b.product.human_name)
     );
     const downloads = await filterBundles(bundles);
+    console.log(
+      `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+    );
+    process.exit(0);
     downloads.sort((a, b) => a.name.localeCompare(b.name));
     totalDownloads = downloads.length;
     if (options.checksumsUpdate) {

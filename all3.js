@@ -212,6 +212,8 @@ async function fetchOrders() {
   return JSON.parse(data);
 }
 
+let preFilteredDownloads = 0;
+
 async function filterBundles(bundles) {
   console.log(
     `${colors.yellow(bundles.length)} bundles containing downloadable items`
@@ -222,22 +224,35 @@ async function filterBundles(bundles) {
       subproduct.downloads.forEach(download => {
         download.download_struct.forEach(struct => {
           if (struct.url) {
+            preFilteredDownloads++;
             const url = new URL(struct.url.web);
-            const fileName = path.basename(url.pathname);
+            const fileName = sanitizeFilename(path.basename(url.pathname));
             const cacheKey = path.join(
               sanitizeFilename(bundle.product.human_name),
               sanitizeFilename(subproduct.human_name),
-              sanitizeFilename(fileName)
+              fileName
             );
+            const downloadPath = path.resolve(
+              options.downloadFolder,
+              sanitizeFilename(bundle.product.human_name),
+              sanitizeFilename(subproduct.human_name)
+            );
+            const filePath = path.resolve(downloadPath, fileName);
+
             const existing = downloads.some(elem => {
-              const elemUrl = new URL(elem.download.url.web);
-              const elemFileName = path.basename(elemUrl.pathname);
-              return (
+              const found =
                 elem.cacheKey === cacheKey ||
-                (elemFileName === fileName &&
+                (elem.fileName === fileName &&
                   elem.download.sha1 === struct.sha1 &&
-                  elem.download.md5 === struct.md5)
-              );
+                  elem.download.md5 === struct.md5);
+              if (found) {
+                console.log(
+                  `${colors.blue(cacheKey)} is duplicate of ${colors.cyan(
+                    elem.cacheKey
+                  )}`
+                );
+              }
+              return found;
             });
             if (!existing) {
               downloads.push({
@@ -245,21 +260,12 @@ async function filterBundles(bundles) {
                 download: struct,
                 name: subproduct.human_name,
                 cacheKey,
+                fileName,
+                downloadPath,
+                filePath,
+                url,
               });
             } else {
-              const downloadPath = path.resolve(
-                options.downloadFolder,
-                sanitizeFilename(bundle.product.human_name),
-                sanitizeFilename(subproduct.human_name)
-              );
-
-              const url = new URL(struct.url.web);
-              const fileName = path.basename(url.pathname);
-
-              const filePath = path.resolve(
-                downloadPath,
-                sanitizeFilename(fileName)
-              );
               if (existsSync(filePath)) {
                 unlinkSync(filePath);
               }
@@ -280,7 +286,7 @@ async function fileHash(filename, cacheKey) {
     let md5sum = createHash('md5');
     let size = statSync(filename).size;
     bars[cacheKey] = progress.create(size, 0, {
-      file: `Hashing: ${cacheKey}`,
+      file: colors.yellow(`Hashing: ${cacheKey}`),
     });
     try {
       let s = createReadStream(filename);
@@ -308,17 +314,23 @@ async function checkSignatureMatch(
   cacheKey,
   downloaded = false
 ) {
-  var hash = '';
+  let hash;
   if (checksumCache[cacheKey] && !downloaded) {
     hash = checksumCache[cacheKey];
   } else {
     hash = await fileHash(filePath, cacheKey);
     checksumCache[cacheKey] = hash;
   }
-  return (
+  let checked =
     (download.sha1 && download.sha1 === hash.sha1) ||
-    (download.md5 && download.md5 === hash.md5)
-  );
+    (download.md5 && download.md5 === hash.md5);
+  // assume remote checksum is bad
+  if (!checked) {
+    const newhash = await fileHash(filePath, cacheKey);
+    checked = newhash.sha1 === hash.sha1 || newhash.md5 === hash.md5;
+    console.log(`${cacheKey}:${checked}\n\tmd5: ${hash.md5}:${newhash.md5}\n\tsha1: ${hash.sha1}:${newhash.sha1}`);
+  }
+  return checked;
 }
 
 async function doDownload(filePath, download, retries = 0) {
@@ -332,7 +344,7 @@ async function doDownload(filePath, download, retries = 0) {
         let shasum = createHash('sha1');
         let md5sum = createHash('md5');
         bars[download.cacheKey] = progress.create(size, 0, {
-          file: download.cacheKey,
+          file: colors.green(download.cacheKey),
         });
         res.on('data', data => {
           shasum.update(data);
@@ -372,35 +384,27 @@ async function doDownload(filePath, download, retries = 0) {
       }
     );
   });
-  // fileCheckQueue.add(() =>
-  //   checkSignatureMatch(filePath, download.download, download.cacheKey, true)
-  // );
 }
 
 async function downloadItem(download) {
-  const downloadPath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(download.bundle),
-    sanitizeFilename(download.name)
-  );
-
-  await mkdirp(downloadPath);
-  const url = new URL(download.download.url.web);
-  const fileName = path.basename(url.pathname);
-
-  const filePath = path.resolve(downloadPath, sanitizeFilename(fileName));
+  await mkdirp(download.downloadPath);
 
   if (
-    existsSync(filePath) &&
+    existsSync(download.filePath) &&
     (await fileCheckQueue.add(() =>
-      checkSignatureMatch(filePath, download.download, download.cacheKey)
+      checkSignatureMatch(
+        download.filePath,
+        download.download,
+        download.cacheKey
+      )
     ))
   ) {
+    console.log(`${download.cacheKey} already exists`);
     doneDownloads++;
     bars.downloads.increment();
   } else {
     downloadPromises.push(
-      downloadQueue.add(() => doDownload(filePath, download))
+      downloadQueue.add(() => doDownload(download.filePath, download))
     );
   }
 }
@@ -427,6 +431,10 @@ async function downloadItems(downloads) {
       a.product.human_name.localeCompare(b.product.human_name)
     );
     const downloads = await filterBundles(bundles);
+    console.log(
+      `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+    );
+    // process.exit(0);
     downloads.sort((a, b) => a.name.localeCompare(b.name));
     totalDownloads = downloads.length;
     if (options.checksumsUpdate) {
