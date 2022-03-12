@@ -328,61 +328,61 @@ async function checkSignatureMatch(
   if (!checked) {
     const newhash = await fileHash(filePath, cacheKey);
     checked = newhash.sha1 === hash.sha1 || newhash.md5 === hash.md5;
-    console.log(`${cacheKey}:${checked}\n\tmd5: ${hash.md5}:${newhash.md5}\n\tsha1: ${hash.sha1}:${newhash.sha1}`);
+    console.log(
+      `${cacheKey}:${checked}\n\tmd5: ${hash.md5}:${newhash.md5}\n\tsha1: ${hash.sha1}:${newhash.sha1}`
+    );
   }
   return checked;
 }
 
 async function doDownload(filePath, download, retries = 0) {
   await new Promise((done, reject) => {
-    const req = https.get(
-      download.download.url.web,
-      { timeout: 60000 },
-      async function (res) {
-        const size = Number(res.headers['content-length']);
-        let got = 0;
-        let shasum = createHash('sha1');
-        let md5sum = createHash('md5');
-        bars[download.cacheKey] = progress.create(size, 0, {
-          file: colors.green(download.cacheKey),
-        });
-        res.on('data', data => {
-          shasum.update(data);
-          md5sum.update(data);
-          got += Buffer.byteLength(data);
-          bars[download.cacheKey].increment(Buffer.byteLength(data));
-        });
-        res.pipe(createWriteStream(filePath));
-        res.on('end', () => {
-          const hash = {
-            sha1: shasum.digest('hex'),
-            md5: md5sum.digest('hex'),
-          };
-          checksumCache[download.cacheKey] = hash;
-          progress.remove(bars[download.cacheKey]);
-          bars.delete(download.cacheKey);
-          doneDownloads++;
-          bars.downloads.increment();
-          done();
-        });
-        res.on('timeout', () => req.destroy());
-        res.on('error', () => {
-          req.destroy();
-          progress.remove(bars[download.cacheKey]);
-          bars.delete(download.cacheKey);
-          if (retries < 300) {
-            downloadPromises.push(
-              downloadQueue.add(() =>
-                doDownload(filePath, download, retries + 1)
-              )
-            );
+    try {
+      const req = https.get(
+        download.download.url.web,
+        // { timeout: 60000 },
+        async function (res) {
+          const size = Number(res.headers['content-length']);
+          let got = 0;
+          let shasum = createHash('sha1');
+          let md5sum = createHash('md5');
+          bars[download.cacheKey] = progress.create(size, 0, {
+            file: colors.green(download.cacheKey),
+          });
+          res.on('data', data => {
+            shasum.update(data);
+            md5sum.update(data);
+            got += Buffer.byteLength(data);
+            bars[download.cacheKey].increment(Buffer.byteLength(data));
+          });
+          res.pipe(createWriteStream(filePath));
+          res.on('end', () => {
+            const hash = {
+              sha1: shasum.digest('hex'),
+              md5: md5sum.digest('hex'),
+            };
+            checksumCache[download.cacheKey] = hash;
+            progress.remove(bars[download.cacheKey]);
+            bars.delete(download.cacheKey);
+            doneDownloads++;
+            bars.downloads.increment();
             done();
-          } else {
-            reject(`${download.cacheKey}: Download failed ${retries} times`);
-          }
-        });
+          });
+        }
+      );
+    } catch (err) {
+      req.destroy();
+      progress.remove(bars[download.cacheKey]);
+      bars.delete(download.cacheKey);
+      if (retries < 300) {
+        downloadPromises.push(
+          downloadQueue.add(() => doDownload(filePath, download, retries + 1))
+        );
+        done();
+      } else {
+        reject(`${download.cacheKey}: Download failed ${retries} times`);
       }
-    );
+    }
   });
 }
 
