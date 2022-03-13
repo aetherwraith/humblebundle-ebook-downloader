@@ -73,8 +73,9 @@ const getRequestHeaders = {
 const client = http2.connect('https://www.humblebundle.com');
 client.on('error', err => {
   client.close();
+  console.log('bollocks');
   console.error(err);
-  process.exit(err);
+  // process.exit(err);
 });
 
 let totalBundles = 0;
@@ -368,8 +369,36 @@ async function doDownload(filePath, download, retries = 0) {
             bars.downloads.increment();
             done();
           });
+          res.on('error', () => {
+            req.destroy();
+            progress.remove(bars[download.cacheKey]);
+            bars.delete(download.cacheKey);
+            if (retries < 300) {
+              downloadPromises.push(
+                downloadQueue.add(() =>
+                  doDownload(filePath, download, retries + 1)
+                )
+              );
+              done();
+            } else {
+              reject(`${download.cacheKey}: Download failed ${retries} times`);
+            }
+          });
         }
       );
+      req.on('error', () => {
+        req.destroy();
+        progress.remove(bars[download.cacheKey]);
+        bars.delete(download.cacheKey);
+        if (retries < 300) {
+          downloadPromises.push(
+            downloadQueue.add(() => doDownload(filePath, download, retries + 1))
+          );
+          done();
+        } else {
+          reject(`${download.cacheKey}: Download failed ${retries} times`);
+        }
+      });
     } catch (err) {
       req.destroy();
       progress.remove(bars[download.cacheKey]);
@@ -424,6 +453,7 @@ async function downloadItems(downloads) {
     bars['bundles'] = progress.create(gameKeys.length, 0, { file: 'Bundles' });
     const bundles = await getAllOrderInfo(gameKeys);
     await client.close();
+    await client.destroy();
     bars['bundles'].stop();
     progress.remove(bars['bundles']);
     bars.delete('bundles');

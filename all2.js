@@ -242,7 +242,11 @@ async function filterBundles(bundles) {
               // );
               const found = elem.cacheKey === cacheKey;
               if (found) {
-                console.log(`${colors.blue(cacheKey)} is duplicate of ${colors.cyan(elem.cacheKey)}`);
+                console.log(
+                  `${colors.blue(cacheKey)} is duplicate of ${colors.cyan(
+                    elem.cacheKey
+                  )}`
+                );
               }
               return found;
             });
