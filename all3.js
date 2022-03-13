@@ -246,13 +246,13 @@ async function filterBundles(bundles) {
                 (elem.fileName === fileName &&
                   elem.download.sha1 === struct.sha1 &&
                   elem.download.md5 === struct.md5);
-              if (found) {
-                console.log(
-                  `${colors.blue(cacheKey)} is duplicate of ${colors.cyan(
-                    elem.cacheKey
-                  )}`
-                );
-              }
+              // if (found) {
+              //   console.log(
+              //     `${colors.blue(cacheKey)} is duplicate of ${colors.cyan(
+              //       elem.cacheKey
+              //     )}`
+              //   );
+              // }
               return found;
             });
             if (!existing) {
@@ -329,9 +329,9 @@ async function checkSignatureMatch(
   if (!checked) {
     const newhash = await fileHash(filePath, cacheKey);
     checked = newhash.sha1 === hash.sha1 || newhash.md5 === hash.md5;
-    console.log(
-      `${cacheKey}:${checked}\n\tmd5: ${hash.md5}:${newhash.md5}\n\tsha1: ${hash.sha1}:${newhash.sha1}`
-    );
+    // console.log(
+    //   `${cacheKey}:${checked}\n\tmd5: ${hash.md5}:${newhash.md5}\n\tsha1: ${hash.sha1}:${newhash.sha1}`
+    // );
   }
   return checked;
 }
