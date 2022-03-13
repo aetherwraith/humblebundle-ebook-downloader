@@ -428,7 +428,7 @@ async function downloadItem(download) {
       )
     ))
   ) {
-    console.log(`${download.cacheKey} already exists`);
+    // console.log(`${download.cacheKey} already exists`);
     doneDownloads++;
     bars.downloads.increment();
   } else {
