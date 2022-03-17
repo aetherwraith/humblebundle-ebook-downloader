@@ -57,6 +57,7 @@ commander
   .option('-a, --all', 'Download all available items')
   .option('-t, --trove', 'Download trove items')
   .option('-e, --ebooks', 'Download ebooks')
+  .option('-d, --delete', 'Delete old files')
   .parse(process.argv);
 
 const options = commander.opts();
@@ -77,7 +78,6 @@ client.on('error', err => {
   process.exit(err);
 });
 
-let totalBundles = 0;
 
 let totalDownloads = 0;
 let doneDownloads = 0;
@@ -399,7 +399,6 @@ async function downloadItems(downloads) {
 (async function () {
   try {
     const gameKeys = await fetchOrders();
-    totalBundles = gameKeys.length;
     bars['bundles'] = progress.create(gameKeys.length, 0, { file: 'Bundles' });
     const bundles = await getAllOrderInfo(gameKeys).then(async allBundles => {
       await client.close();
