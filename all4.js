@@ -114,6 +114,7 @@ function createFileCheckQueue(concurrency) {
     bars.checkq.increment();
   });
 }
+
 function createDownloadQueue(concurrency) {
   downloadQueue = new PQueue({ concurrency });
 
@@ -309,6 +310,136 @@ async function filterOrders(orders, downloadFolder) {
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+async function getAllTroveInfo() {
+  const client = http2.connect('https://www.humblebundle.com');
+  client.on('error', err => {
+    client.close();
+    client.destroy();
+    console.error(err);
+    process.exit(err);
+  });
+  var page = 0;
+  var done = false;
+  var troveData = [];
+  while (!done) {
+    const req = client.request({
+      ...getRequestHeaders,
+      ':path': `/client/catalog?index=${page}`,
+    });
+    req.setEncoding('utf8');
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+    });
+    req.end();
+
+    req.on('error', err => {
+      console.log(err);
+      console.log(req);
+      throw err;
+    });
+
+    await new Promise(resolve =>
+      req.on('close', () => {
+        resolve();
+      })
+    );
+
+    const results = JSON.parse(data);
+    if (results.length) {
+      results.forEach(result => troveData.push(result));
+      page += 1;
+    } else {
+      done = true;
+    }
+  }
+  await client.close();
+  await client.destroy();
+  return troveData;
+}
+
+async function getTroveDownloadUrl(download) {
+  const client = http2.connect('https://www.humblebundle.com');
+  client.on('error', err => {
+    client.close();
+    client.destroy();
+    console.error(err);
+    process.exit(err);
+  });
+
+  const req = client.request({
+    cookie: `_simpleauth_sess="${authToken.replace(/^"|"$/g, '')}";`,
+    ':path': `/api/v1/user/download/sign?machine_name=${download.download.machine_name}&filename=${download.download.url.web}`,
+    ':method': 'POST',
+  });
+
+  let data = '';
+  req.on('data', chunk => {
+    data += chunk;
+  });
+  req.end();
+
+  req.on('error', err => {
+    console.log(err);
+    console.log(req);
+    throw err;
+  });
+
+  await new Promise(resolve =>
+    req.on('close', () => {
+      resolve();
+    })
+  );
+
+  await client.close();
+  await client.destroy();
+  const parsed = JSON.parse(data);
+  return parsed.signed_url;
+}
+
+async function filterTroves(troves, downloadFolder) {
+  console.log(
+    `${colors.yellow(troves.length)} bundles containing downloadable items`
+  );
+  let downloads = [];
+  troves.forEach(trove => {
+    Object.values(trove.downloads).forEach(download => {
+      if (download.url) {
+        const fileName = path.basename(download.url.web);
+        const cacheKey = path.join(
+          sanitizeFilename(trove['human-name']),
+          sanitizeFilename(fileName)
+        );
+        const downloadPath = path.resolve(
+          downloadFolder,
+          sanitizeFilename(trove['human-name'])
+        );
+        const filePath = path.resolve(downloadPath, fileName);
+        const existing = downloads.some(
+          elem =>
+            elem.cacheKey === cacheKey ||
+            (download.sha1 && download.sha1 === elem.sha1) ||
+            (download.md5 && download.md5 === elem.md5)
+        );
+        if (!existing) {
+          downloads.push({
+            download,
+            name: trove['human-name'],
+            cacheKey,
+            fileName,
+            downloadPath,
+            filePath,
+            sha1: download.sha1,
+            md5: download.md5,
+          });
+        }
+      }
+    });
+  });
+
+  return downloads;
+}
+
 async function all() {
   console.log(program.opts());
   console.log('all!');
@@ -355,8 +486,31 @@ async function cleanup() {
 }
 
 async function cleanupTrove() {
-  console.log(program.opts());
-  console.log('cleanupTrove!');
+  const options = program.opts();
+  authToken = options.authToken;
+  checksumCache = loadChecksumCache(options.downloadFolder);
+  const troves = await getAllTroveInfo();
+  const downloads = await filterTroves(troves, options.downloadFolder);
+  console.log(
+    `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+  );
+  const existingDownloads = getExistingDownloads(options.downloadFolder);
+  existingDownloads.forEach(existingDownload => {
+    if (
+      !downloads.some(
+        download => existingDownload.cacheKey === download.cacheKey
+      )
+    ) {
+      console.log(`Deleting extra file: ${existingDownload.cacheKey}`);
+      unlinkSync(existingDownload.filePath);
+    }
+  });
+  Object.keys(checksumCache).forEach(cacheKey => {
+    if (!downloads.some(download => cacheKey === download.cacheKey)) {
+      console.log(`Removing checksum from cache: ${cacheKey}`);
+      delete checksumCache[cacheKey];
+    }
+  });
 }
 
 async function checksums() {
@@ -398,7 +552,10 @@ async function checksums() {
   program.command('trove').description('Download trove items').action(trove);
   program.command('ebooks').description('Download ebooks').action(ebooks);
   program.command('cleanup').description('Cleanup old files').action(cleanup);
-  program.command('cleanuptrove').description('Cleanup old files from trove').action(cleanupTrove);
+  program
+    .command('cleanuptrove')
+    .description('Cleanup old files from trove')
+    .action(cleanupTrove);
   program
     .command('checksums')
     .description('Update checksums')
