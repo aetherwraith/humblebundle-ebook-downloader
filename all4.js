@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'fs';
 import mkdirp from 'mkdirp';
@@ -73,9 +74,15 @@ function loadChecksumCache(downloadFolder) {
     );
   }
 
-  process.on('SIGINT', () => {
+  function exitHandler() {
     writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
-  });
+    progress.stop();
+    process.exit();
+  }
+
+  process.on('SIGINT', exitHandler);
+
+  process.on('exit', exitHandler);
 
   console.log(
     `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
@@ -94,6 +101,8 @@ function getRequestHeaders() {
 
 function createFileCheckQueue(concurrency) {
   fileCheckQueue = new PQueue({ concurrency });
+
+  bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
 
   fileCheckQueue.on('add', () => {
     countFileChecks++;
@@ -137,6 +146,17 @@ const readdirRecursive = location =>
     []
   );
 
+const getExistingDownloads = downloadFolder =>
+  readdirRecursive(downloadFolder)
+    .filter(file => !file.includes('checksums.json'))
+    .map(file => {
+      let cacheKey = file.replace(downloadFolder, '');
+      if (cacheKey.startsWith('/')) {
+        cacheKey = cacheKey.substring(1);
+      }
+      return { filePath: file, cacheKey };
+    });
+
 async function fetchOrder(urlPath) {
   const client = http2.connect('https://www.humblebundle.com');
 
@@ -154,9 +174,6 @@ async function fetchOrder(urlPath) {
   req.setEncoding('utf8');
   let data = '';
   req.on('data', chunk => {
-    if (chunk.includes('error')) {
-      throw Error(chunk);
-    }
     data += chunk;
   });
   req.end();
@@ -182,7 +199,6 @@ async function getAllOrderInfo(gameKeys, concurrency) {
   bars[bundlesBar] = progress.create(gameKeys.length, 0, { file: bundlesBar });
   return PMap(gameKeys, getOrderInfo, { concurrency }).then(
     async allBundles => {
-      bars[bundlesBar].stop();
       progress.remove(bars[bundlesBar]);
       bars.delete(bundlesBar);
       return allBundles.sort((a, b) =>
@@ -231,6 +247,68 @@ async function fileHash(download) {
   });
 }
 
+async function updateHash(download) {
+  checksumCache[download.cacheKey] = await fileHash(download);
+}
+
+async function filterOrders(orders, downloadFolder) {
+  console.log(
+    `${colors.yellow(orders.length)} bundles containing downloadable items`
+  );
+  let downloads = [];
+  orders.forEach(order => {
+    order.subproducts.forEach(subproduct => {
+      subproduct.downloads.forEach(download => {
+        download.download_struct.forEach(struct => {
+          if (struct.url) {
+            preFilteredDownloads++;
+            const url = new URL(struct.url.web);
+            const fileName = sanitizeFilename(path.basename(url.pathname));
+            const cacheKey = path.join(
+              sanitizeFilename(order.product.human_name),
+              sanitizeFilename(subproduct.human_name),
+              fileName
+            );
+            const downloadPath = path.resolve(
+              downloadFolder,
+              sanitizeFilename(order.product.human_name),
+              sanitizeFilename(subproduct.human_name)
+            );
+            const filePath = path.resolve(downloadPath, fileName);
+
+            const existing = downloads.some(elem => {
+              return (
+                elem.cacheKey === cacheKey ||
+                (struct.sha1 && struct.sha1 === elem.sha1) ||
+                (struct.md5 && struct.md5 === elem.md5)
+              );
+            });
+            if (!existing) {
+              downloads.push({
+                bundle: order.product.human_name,
+                // download: struct,
+                name: subproduct.human_name,
+                cacheKey,
+                fileName,
+                downloadPath,
+                filePath,
+                url,
+                sha1: struct.sha1,
+                md5: struct.md5,
+              });
+            } else {
+              if (existsSync(filePath)) {
+                unlinkSync(filePath);
+              }
+            }
+          }
+        });
+      });
+    });
+  });
+  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function all() {
   console.log(program.opts());
   console.log('all!');
@@ -247,8 +325,38 @@ async function ebooks() {
 }
 
 async function cleanup() {
+  const options = program.opts();
+  authToken = options.authToken;
+  checksumCache = loadChecksumCache(options.downloadFolder);
+  const orderList = await getOrderList();
+  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const downloads = await filterOrders(orderInfo, options.downloadFolder);
+  console.log(
+    `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+  );
+  const existingDownloads = getExistingDownloads(options.downloadFolder);
+  existingDownloads.forEach(existingDownload => {
+    if (
+      !downloads.some(
+        download => existingDownload.cacheKey === download.cacheKey
+      )
+    ) {
+      console.log(`Deleting extra file: ${existingDownload.cacheKey}`);
+      unlinkSync(existingDownload.filePath);
+    }
+  });
+  Object.keys(checksumCache).forEach(cacheKey => {
+    if (!downloads.some(download => cacheKey === download.cacheKey)) {
+      console.log(`Removing checksum from cache: ${cacheKey}`);
+      delete checksumCache[cacheKey];
+    }
+  });
+  progress.stop();
+}
+
+async function cleanupTrove() {
   console.log(program.opts());
-  console.log('cleanup!');
+  console.log('cleanupTrove!');
 }
 
 async function checksums() {
@@ -256,7 +364,12 @@ async function checksums() {
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   createFileCheckQueue(options.downloadLimit);
-  console.log(readdirRecursive(options.downloadFolder));
+  getExistingDownloads(options.downloadFolder).forEach(download => {
+    fileCheckQueue.add(() => updateHash(download));
+  });
+  await fileCheckQueue.onIdle();
+  progress.stop();
+  console.log(`${colors.green('Updated:')} ${colors.blue(countFileChecks)}`);
 }
 
 (async function () {
@@ -285,6 +398,7 @@ async function checksums() {
   program.command('trove').description('Download trove items').action(trove);
   program.command('ebooks').description('Download ebooks').action(ebooks);
   program.command('cleanup').description('Cleanup old files').action(cleanup);
+  program.command('cleanuptrove').description('Cleanup old files from trove').action(cleanupTrove);
   program
     .command('checksums')
     .description('Update checksums')
