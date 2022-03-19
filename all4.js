@@ -26,6 +26,7 @@ const packageInfo = JSON.parse(
   readFileSync('./package.json', { encoding: 'utf8' })
 );
 const userAgent = `HumbleBundle-Ebook-Downloader/${packageInfo.version}`;
+const SUPPORTED_FORMATS = ['cbz', 'epub', 'pdf_hd', 'pdf', 'mobi'];
 
 let authToken, fileCheckQueue, downloadQueue, checksumCache;
 let totalDownloads = 0;
@@ -33,7 +34,6 @@ let doneDownloads = 0;
 let countFileChecks = 0;
 let countDownloads = 0;
 let preFilteredDownloads = 0;
-const downloadPromises = [];
 
 const progress = new cliProgress.MultiBar(
   {
@@ -67,7 +67,7 @@ function loadChecksumCache(downloadFolder) {
     sanitizeFilename(cacheFileName)
   );
 
-  let checksumCache = {};
+  checksumCache = {};
   if (!existsSync(cacheFilePath)) {
     mkdirp(downloadFolder);
     writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
@@ -100,6 +100,29 @@ function getRequestHeaders() {
     'User-Agent': userAgent,
     Cookie: `_simpleauth_sess="${authToken.replace(/^"|"$/g, '')}";`,
   };
+}
+
+function normalizeFormat(format) {
+  switch (format.toLowerCase()) {
+    case '.cbz':
+      return 'cbz';
+    case 'pdf (hq)':
+    case 'pdf (hd)':
+      return 'pdf_hd';
+    case 'download':
+      return 'pdf';
+    default:
+      return format.toLowerCase();
+  }
+}
+
+function getExtension(format) {
+  switch (format.toLowerCase()) {
+    case 'pdf_hd':
+      return '.pdf';
+    default:
+      return `.${format}`;
+  }
 }
 
 function createFileCheckQueue(concurrency) {
@@ -303,9 +326,10 @@ async function filterOrders(orders, downloadFolder) {
                 md5: struct.md5,
               });
             } else {
-              if (existsSync(filePath)) {
-                unlinkSync(filePath);
-              }
+              // not doing this any more as it causes a lot of extra downloads with duplicate bundles
+              // if (existsSync(filePath)) {
+              //   unlinkSync(filePath);
+              // }
             }
           }
         });
@@ -323,9 +347,9 @@ async function getAllTroveInfo() {
     console.error(err);
     process.exit(err);
   });
-  var page = 0;
-  var done = false;
-  var troveData = [];
+  let page = 0;
+  let done = false;
+  const troveData = [];
   while (!done) {
     const req = client.request({
       ...getRequestHeaders,
@@ -407,18 +431,18 @@ async function filterTroves(troves, downloadFolder) {
     `${colors.yellow(troves.length)} bundles containing downloadable items`
   );
   let downloads = [];
-  troves.forEach(trove => {
-    Object.values(trove.downloads).forEach(download => {
+  troves.forEach(trovey => {
+    Object.values(trovey.downloads).forEach(download => {
       if (download.url) {
         preFilteredDownloads++;
         const fileName = path.basename(download.url.web);
         const cacheKey = path.join(
-          sanitizeFilename(trove['human-name']),
+          sanitizeFilename(trovey['human-name']),
           sanitizeFilename(fileName)
         );
         const downloadPath = path.resolve(
           downloadFolder,
-          sanitizeFilename(trove['human-name'])
+          sanitizeFilename(trovey['human-name'])
         );
         const filePath = path.resolve(downloadPath, fileName);
         const existing = downloads.some(
@@ -430,7 +454,7 @@ async function filterTroves(troves, downloadFolder) {
         if (!existing) {
           downloads.push({
             download,
-            name: trove['human-name'],
+            name: trovey['human-name'],
             cacheKey,
             fileName,
             downloadPath,
@@ -443,14 +467,100 @@ async function filterTroves(troves, downloadFolder) {
     });
   });
 
-  return downloads;
+  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function filterEbooks(ebookBundles, downloadFolder) {
+  // priority of format to download cbz -> epub -> pdf_hd -> pdf -> mobi
+  console.log(
+    `${colors.yellow(ebookBundles.length)} bundles containing ebooks`
+  );
+  let downloads = [];
+  ebookBundles
+    .filter(bundle =>
+      bundle.subproducts.find(subproduct =>
+        subproduct.downloads.filter(
+          download => download.platform.toLowerCase() === 'ebook'
+        )
+      )
+    )
+    .forEach(bundle => {
+      let date = new Date(bundle.created);
+      bundle.subproducts.forEach(subproduct => {
+        const filteredDownloads = subproduct.downloads.filter(
+          download => download.platform.toLowerCase() === 'ebook'
+        );
+        SUPPORTED_FORMATS.forEach(format => {
+          filteredDownloads.forEach(download =>
+            download.download_struct.forEach(struct => {
+              if (
+                struct.name &&
+                struct.url &&
+                normalizeFormat(struct.name) === format
+              ) {
+                if (
+                  struct.name.toLowerCase().localeCompare('download') === 0 &&
+                  struct.url.web.toLowerCase().indexOf('.pdf') < 0
+                ) {
+                  return;
+                }
+                const uploaded_at = new Date(struct.uploaded_at);
+                if (uploaded_at > date) date = uploaded_at;
+                const existing = downloads.some(
+                  elem => elem.name === subproduct.human_name
+                );
+                if (
+                  !existing ||
+                  (date > existing.date &&
+                    struct.name === existing.download.name)
+                ) {
+                  if (existing) {
+                    downloads = downloads.filter(
+                      elem => elem.name !== existing.name
+                    );
+                  }
+                  const downloadPath = path.resolve(
+                    downloadFolder,
+                    sanitizeFilename(bundle.product.human_name)
+                  );
+                  const fileName = `${subproduct.human_name.trim()}${getExtension(
+                    normalizeFormat(struct.name)
+                  )}`;
+                  const filePath = path.resolve(
+                    downloadPath,
+                    sanitizeFilename(fileName)
+                  );
+                  const cacheKey = path.join(
+                    sanitizeFilename(bundle.product.human_name),
+                    sanitizeFilename(fileName)
+                  );
+                  const url = new URL(struct.url.web);
+                  downloads.push({
+                    bundle: bundle.product.human_name,
+                    // download: struct,
+                    name: subproduct.human_name,
+                    cacheKey,
+                    fileName,
+                    downloadPath,
+                    filePath,
+                    url,
+                    sha1: struct.sha1,
+                    md5: struct.md5,
+                  });
+                }
+              }
+            })
+          );
+        });
+      });
+    });
+  return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function doDownload(download, retries = 0) {
   return new Promise((done, reject) => {
-    const handleDownloadError = req => {
-      console.log('bollocks');
-      req.destroy();
+    const handleDownloadError = request => {
+      request.destroy();
       progress.remove(bars[download.cacheKey]);
       bars.delete(download.cacheKey);
       if (retries < 300) {
@@ -480,11 +590,10 @@ async function doDownload(download, retries = 0) {
         });
         res.pipe(createWriteStream(download.filePath));
         res.on('end', () => {
-          const hash = {
+          checksumCache[download.cacheKey] = {
             sha1: shasum.digest('hex'),
             md5: md5sum.digest('hex'),
           };
-          checksumCache[download.cacheKey] = hash;
           progress.remove(bars[download.cacheKey]);
           bars.delete(download.cacheKey);
           doneDownloads++;
@@ -587,6 +696,7 @@ async function all() {
   await downloadQueue.onIdle();
 
   progress.stop();
+  await clean(options, downloads);
   console.log(
     `${colors.green(
       'Done!'
@@ -615,6 +725,7 @@ async function trove() {
   await downloadQueue.onIdle();
 
   progress.stop();
+  await clean(options, downloads);
   console.log(
     `${colors.green(
       'Done!'
@@ -623,8 +734,33 @@ async function trove() {
 }
 
 async function ebooks() {
-  console.log(program.opts());
-  console.log('ebooks!');
+  const options = program.opts();
+  authToken = options.authToken;
+  checksumCache = loadChecksumCache(options.downloadFolder);
+  const orderList = await getOrderList();
+  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const downloads = await filterEbooks(orderInfo, options.downloadFolder);
+  console.log(
+      `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+  );
+  totalDownloads = downloads.length;
+  bars.downloads = progress.create(downloads.length, 0, {
+    file: 'Downloads',
+  });
+  createDownloadQueue(options.downloadLimit);
+  createFileCheckQueue(options.downloadLimit);
+  await Promise.all(downloads.map(download => downloadItem(download)));
+
+  await fileCheckQueue.onIdle();
+  await downloadQueue.onIdle();
+
+  progress.stop();
+  await clean(options, downloads);
+  console.log(
+      `${colors.green(
+          'Done!'
+      )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
+  );
 }
 
 async function cleanup() {
@@ -634,6 +770,20 @@ async function cleanup() {
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterOrders(orderInfo, options.downloadFolder);
+  console.log(
+    `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+  );
+  await clean(options, downloads);
+  progress.stop();
+}
+
+async function cleanupEbooks() {
+  const options = program.opts();
+  authToken = options.authToken;
+  checksumCache = loadChecksumCache(options.downloadFolder);
+  const orderList = await getOrderList();
+  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const downloads = await filterEbooks(orderInfo, options.downloadFolder);
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -697,6 +847,10 @@ async function checksums() {
     .command('cleanuptrove')
     .description('Cleanup old files from trove')
     .action(cleanupTrove);
+  program
+    .command('cleanupebooks')
+    .description('Cleanup old files from ebooks')
+    .action(cleanupEbooks);
   program
     .command('checksums')
     .description('Update checksums')
