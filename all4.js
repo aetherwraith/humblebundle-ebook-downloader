@@ -477,19 +477,20 @@ async function filterEbooks(ebookBundles, downloadFolder) {
   );
   let downloads = [];
   ebookBundles
-    .filter(bundle =>
-      bundle.subproducts.find(subproduct =>
-        subproduct.downloads.filter(
-          download => download.platform.toLowerCase() === 'ebook'
-        )
-      )
-    )
+    // .filter(bundle =>
+    //   bundle.subproducts.find(subproduct =>
+    //     subproduct.downloads.filter(
+    //       download => download.platform.toLowerCase() === 'ebook'
+    //     )
+    //   )
+    // )
     .forEach(bundle => {
       let date = new Date(bundle.created);
       bundle.subproducts.forEach(subproduct => {
-        const filteredDownloads = subproduct.downloads.filter(
-          download => download.platform.toLowerCase() === 'ebook'
-        );
+        // const filteredDownloads = subproduct.downloads.filter(
+        //   download => download.platform.toLowerCase() === 'ebook'
+        // );
+        const filteredDownloads = subproduct.downloads;
         SUPPORTED_FORMATS.forEach(format => {
           filteredDownloads.forEach(download =>
             download.download_struct.forEach(struct => {
@@ -506,6 +507,7 @@ async function filterEbooks(ebookBundles, downloadFolder) {
                 }
                 const uploaded_at = new Date(struct.uploaded_at);
                 if (uploaded_at > date) date = uploaded_at;
+                // TODO: check hash matches too
                 const existing = downloads.some(
                   elem => elem.name === subproduct.human_name
                 );
