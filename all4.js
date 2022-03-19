@@ -7,6 +7,7 @@ import { program } from 'commander';
 import colors from 'colors';
 import {
   createReadStream,
+  createWriteStream,
   existsSync,
   readdirSync,
   readFileSync,
@@ -19,6 +20,7 @@ import sanitizeFilename from 'sanitize-filename';
 import path from 'path';
 import cliProgress from 'cli-progress';
 import { createHash } from 'crypto';
+import https from 'https';
 
 const packageInfo = JSON.parse(
   readFileSync('./package.json', { encoding: 'utf8' })
@@ -31,6 +33,7 @@ let doneDownloads = 0;
 let countFileChecks = 0;
 let countDownloads = 0;
 let preFilteredDownloads = 0;
+const downloadPromises = [];
 
 const progress = new cliProgress.MultiBar(
   {
@@ -117,6 +120,8 @@ function createFileCheckQueue(concurrency) {
 
 function createDownloadQueue(concurrency) {
   downloadQueue = new PQueue({ concurrency });
+
+  bars.downloadq = progress.create(0, 0, { file: 'Download Queue' });
 
   downloadQueue.on('add', () => {
     countDownloads++;
@@ -405,6 +410,7 @@ async function filterTroves(troves, downloadFolder) {
   troves.forEach(trove => {
     Object.values(trove.downloads).forEach(download => {
       if (download.url) {
+        preFilteredDownloads++;
         const fileName = path.basename(download.url.web);
         const cacheKey = path.join(
           sanitizeFilename(trove['human-name']),
@@ -440,14 +446,180 @@ async function filterTroves(troves, downloadFolder) {
   return downloads;
 }
 
+async function doDownload(download, retries = 0) {
+  return new Promise((done, reject) => {
+    const handleDownloadError = req => {
+      console.log('bollocks');
+      req.destroy();
+      progress.remove(bars[download.cacheKey]);
+      bars.delete(download.cacheKey);
+      if (retries < 300) {
+        downloadQueue.add(() => doDownload(download, retries + 1));
+        done();
+      } else {
+        reject(`${download.cacheKey}: Download failed ${retries} times`);
+      }
+    };
+
+    const req = https.get(
+      download.url,
+      { timeout: 60000 },
+      async function (res) {
+        const size = Number(res.headers['content-length']);
+        let got = 0;
+        let shasum = createHash('sha1');
+        let md5sum = createHash('md5');
+        bars[download.cacheKey] = progress.create(size, 0, {
+          file: colors.green(download.cacheKey),
+        });
+        res.on('data', data => {
+          shasum.update(data);
+          md5sum.update(data);
+          got += Buffer.byteLength(data);
+          bars[download.cacheKey].increment(Buffer.byteLength(data));
+        });
+        res.pipe(createWriteStream(download.filePath));
+        res.on('end', () => {
+          const hash = {
+            sha1: shasum.digest('hex'),
+            md5: md5sum.digest('hex'),
+          };
+          checksumCache[download.cacheKey] = hash;
+          progress.remove(bars[download.cacheKey]);
+          bars.delete(download.cacheKey);
+          doneDownloads++;
+          bars.downloads.increment();
+          done();
+        });
+        res.on('error', () => handleDownloadError(req));
+      }
+    );
+    req.on('error', () => handleDownloadError(req));
+  });
+}
+
+async function checkSignatureMatch(download, downloaded = false) {
+  let verified = false;
+  if (existsSync(download.filePath)) {
+    let hash;
+    if (checksumCache[download.cacheKey] && !downloaded) {
+      hash = checksumCache[download.cacheKey];
+    } else {
+      hash = await fileHash(download);
+      checksumCache[download.cacheKey] = hash;
+    }
+    verified =
+      (download.sha1 && download.sha1 === hash.sha1) ||
+      (download.md5 && download.md5 === hash.md5);
+    // assume remote checksum is bad
+    // if (!checked) {
+    //   const newhash = await fileHash(download);
+    //   checked = newhash.sha1 === hash.sha1 || newhash.md5 === hash.md5;
+    // }
+  }
+  return verified;
+}
+
+async function downloadItem(download) {
+  await mkdirp(download.downloadPath);
+
+  if (await fileCheckQueue.add(() => checkSignatureMatch(download))) {
+    doneDownloads++;
+    bars.downloads.increment();
+  } else {
+    return downloadQueue.add(() => doDownload(download));
+  }
+}
+
+async function downloadTroveItem(download) {
+  await mkdirp(download.downloadPath);
+
+  if (await fileCheckQueue.add(() => checkSignatureMatch(download))) {
+    doneDownloads++;
+    bars.downloads.increment();
+  } else {
+    const url = await getTroveDownloadUrl(download);
+    return downloadQueue.add(() => doDownload({ url, ...download }));
+  }
+}
+
+async function clean(options, downloads) {
+  const existingDownloads = getExistingDownloads(options.downloadFolder);
+  console.log('Removing files');
+  existingDownloads.forEach(existingDownload => {
+    if (
+      !downloads.some(
+        download => existingDownload.cacheKey === download.cacheKey
+      )
+    ) {
+      console.log(`Deleting extra file: ${existingDownload.cacheKey}`);
+      unlinkSync(existingDownload.filePath);
+    }
+  });
+  console.log('Removing checksums from cache');
+  Object.keys(checksumCache).forEach(cacheKey => {
+    if (!downloads.some(download => cacheKey === download.cacheKey)) {
+      console.log(`Removing checksum from cache: ${cacheKey}`);
+      delete checksumCache[cacheKey];
+    }
+  });
+}
+
 async function all() {
-  console.log(program.opts());
-  console.log('all!');
+  const options = program.opts();
+  authToken = options.authToken;
+  checksumCache = loadChecksumCache(options.downloadFolder);
+  const orderList = await getOrderList();
+  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const downloads = await filterOrders(orderInfo, options.downloadFolder);
+  console.log(
+    `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+  );
+  totalDownloads = downloads.length;
+  bars.downloads = progress.create(downloads.length, 0, {
+    file: 'Downloads',
+  });
+  createDownloadQueue(options.downloadLimit);
+  createFileCheckQueue(options.downloadLimit);
+  await Promise.all(downloads.map(download => downloadItem(download)));
+
+  await fileCheckQueue.onIdle();
+  await downloadQueue.onIdle();
+
+  progress.stop();
+  console.log(
+    `${colors.green(
+      'Done!'
+    )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
+  );
 }
 
 async function trove() {
-  console.log(program.opts());
-  console.log('trove!');
+  const options = program.opts();
+  authToken = options.authToken;
+  checksumCache = loadChecksumCache(options.downloadFolder);
+  const troves = await getAllTroveInfo();
+  const downloads = await filterTroves(troves, options.downloadFolder);
+  console.log(
+    `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+  );
+  totalDownloads = downloads.length;
+  bars.downloads = progress.create(downloads.length, 0, {
+    file: 'Downloads',
+  });
+  createDownloadQueue(options.downloadLimit);
+  createFileCheckQueue(options.downloadLimit);
+  await Promise.all(downloads.map(download => downloadTroveItem(download)));
+
+  await fileCheckQueue.onIdle();
+  await downloadQueue.onIdle();
+
+  progress.stop();
+  console.log(
+    `${colors.green(
+      'Done!'
+    )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
+  );
 }
 
 async function ebooks() {
@@ -465,23 +637,7 @@ async function cleanup() {
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
-  const existingDownloads = getExistingDownloads(options.downloadFolder);
-  existingDownloads.forEach(existingDownload => {
-    if (
-      !downloads.some(
-        download => existingDownload.cacheKey === download.cacheKey
-      )
-    ) {
-      console.log(`Deleting extra file: ${existingDownload.cacheKey}`);
-      unlinkSync(existingDownload.filePath);
-    }
-  });
-  Object.keys(checksumCache).forEach(cacheKey => {
-    if (!downloads.some(download => cacheKey === download.cacheKey)) {
-      console.log(`Removing checksum from cache: ${cacheKey}`);
-      delete checksumCache[cacheKey];
-    }
-  });
+  await clean(options, downloads);
   progress.stop();
 }
 
@@ -494,23 +650,8 @@ async function cleanupTrove() {
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
-  const existingDownloads = getExistingDownloads(options.downloadFolder);
-  existingDownloads.forEach(existingDownload => {
-    if (
-      !downloads.some(
-        download => existingDownload.cacheKey === download.cacheKey
-      )
-    ) {
-      console.log(`Deleting extra file: ${existingDownload.cacheKey}`);
-      unlinkSync(existingDownload.filePath);
-    }
-  });
-  Object.keys(checksumCache).forEach(cacheKey => {
-    if (!downloads.some(download => cacheKey === download.cacheKey)) {
-      console.log(`Removing checksum from cache: ${cacheKey}`);
-      delete checksumCache[cacheKey];
-    }
-  });
+  await clean(options, downloads);
+  progress.stop();
 }
 
 async function checksums() {
