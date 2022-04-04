@@ -54,7 +54,19 @@ const bundlesBar = 'bundles';
 function myParseInt(value, dummyPrevious) {
   const parsedValue = parseInt(value, 10);
   if (isNaN(parsedValue)) {
-    throw new program.InvalidOptionArgumentError('Not a number.');
+    throw new program.InvalidOptionArgumentError(`${value} is not a number.`);
+  }
+  return parsedValue;
+}
+
+function myParseArray(value, dummyPrevious) {
+  const parsedValue = value.split(',');
+  if (!parsedValue.every(format => SUPPORTED_FORMATS.includes(format))) {
+    throw new program.InvalidOptionArgumentError(
+      `${value} contains one or more invalid formats. Supported formats are ${SUPPORTED_FORMATS.join(
+        ','
+      )}`
+    );
   }
   return parsedValue;
 }
@@ -280,7 +292,7 @@ async function updateHash(download) {
   checksumCache[download.cacheKey] = await fileHash(download);
 }
 
-async function filterOrders(orders, downloadFolder) {
+async function filterOrders(orders, downloadFolder, dedup) {
   console.log(
     `${colors.yellow(orders.length)} bundles containing downloadable items`
   );
@@ -305,13 +317,16 @@ async function filterOrders(orders, downloadFolder) {
             );
             const filePath = path.resolve(downloadPath, fileName);
 
-            const existing = downloads.some(elem => {
-              return (
-                elem.cacheKey === cacheKey ||
-                (struct.sha1 && struct.sha1 === elem.sha1) ||
-                (struct.md5 && struct.md5 === elem.md5)
-              );
-            });
+            let existing = false;
+            if (dedup) {
+              existing = downloads.some(elem => {
+                return (
+                  elem.cacheKey === cacheKey ||
+                  (struct.sha1 && struct.sha1 === elem.sha1) ||
+                  (struct.md5 && struct.md5 === elem.md5)
+                );
+              });
+            }
             if (!existing) {
               downloads.push({
                 bundle: order.product.human_name,
@@ -325,11 +340,6 @@ async function filterOrders(orders, downloadFolder) {
                 sha1: struct.sha1,
                 md5: struct.md5,
               });
-            } else {
-              // not doing this any more as it causes a lot of extra downloads with duplicate bundles
-              // if (existsSync(filePath)) {
-              //   unlinkSync(filePath);
-              // }
             }
           }
         });
@@ -426,7 +436,7 @@ async function getTroveDownloadUrl(download) {
   return parsed.signed_url;
 }
 
-async function filterTroves(troves, downloadFolder) {
+async function filterTroves(troves, downloadFolder, dedup) {
   console.log(
     `${colors.yellow(troves.length)} bundles containing downloadable items`
   );
@@ -445,12 +455,15 @@ async function filterTroves(troves, downloadFolder) {
           sanitizeFilename(trovey['human-name'])
         );
         const filePath = path.resolve(downloadPath, fileName);
-        const existing = downloads.some(
-          elem =>
-            elem.cacheKey === cacheKey ||
-            (download.sha1 && download.sha1 === elem.sha1) ||
-            (download.md5 && download.md5 === elem.md5)
-        );
+        let existing = false;
+        if (dedup) {
+          existing = downloads.some(
+            elem =>
+              elem.cacheKey === cacheKey ||
+              (download.sha1 && download.sha1 === elem.sha1) ||
+              (download.md5 && download.md5 === elem.md5)
+          );
+        }
         if (!existing) {
           downloads.push({
             download,
@@ -470,7 +483,7 @@ async function filterTroves(troves, downloadFolder) {
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function filterEbooks(ebookBundles, downloadFolder) {
+async function filterEbooks(ebookBundles, downloadFolder, formats, dedup) {
   // priority of format to download cbz -> epub -> pdf_hd -> pdf -> mobi
   console.log(
     `${colors.yellow(ebookBundles.length)} bundles containing ebooks`
@@ -491,7 +504,7 @@ async function filterEbooks(ebookBundles, downloadFolder) {
         //   download => download.platform.toLowerCase() === 'ebook'
         // );
         const filteredDownloads = subproduct.downloads;
-        SUPPORTED_FORMATS.forEach(format => {
+        formats.forEach(format => {
           filteredDownloads.forEach(download =>
             download.download_struct.forEach(struct => {
               if (
@@ -505,12 +518,16 @@ async function filterEbooks(ebookBundles, downloadFolder) {
                 ) {
                   return;
                 }
+                preFilteredDownloads++;
                 const uploaded_at = new Date(struct.uploaded_at);
                 if (uploaded_at > date) date = uploaded_at;
                 // TODO: check hash matches too
-                const existing = downloads.some(
-                  elem => elem.name === subproduct.human_name
-                );
+                let existing = false;
+                if (dedup) {
+                  existing = downloads.some(
+                    elem => elem.name === subproduct.human_name
+                  );
+                }
                 if (
                   !existing ||
                   (date > existing.date &&
@@ -682,7 +699,11 @@ async function all() {
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
-  const downloads = await filterOrders(orderInfo, options.downloadFolder);
+  const downloads = await filterOrders(
+    orderInfo,
+    options.downloadFolder,
+    options.dedup
+  );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -711,7 +732,11 @@ async function trove() {
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const troves = await getAllTroveInfo();
-  const downloads = await filterTroves(troves, options.downloadFolder);
+  const downloads = await filterTroves(
+    troves,
+    options.downloadFolder,
+    options.dedup
+  );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -735,13 +760,18 @@ async function trove() {
   );
 }
 
-async function ebooks() {
+async function ebooks(formats) {
   const options = program.opts();
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
-  const downloads = await filterEbooks(orderInfo, options.downloadFolder);
+  const downloads = await filterEbooks(
+    orderInfo,
+    options.downloadFolder,
+    formats,
+    options.dedup
+  );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -771,7 +801,11 @@ async function cleanup() {
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
-  const downloads = await filterOrders(orderInfo, options.downloadFolder);
+  const downloads = await filterOrders(
+    orderInfo,
+    options.downloadFolder,
+    options.dedup
+  );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -785,7 +819,11 @@ async function cleanupEbooks() {
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
-  const downloads = await filterEbooks(orderInfo, options.downloadFolder);
+  const downloads = await filterEbooks(
+    orderInfo,
+    options.downloadFolder,
+    options.dedup
+  );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -798,7 +836,11 @@ async function cleanupTrove() {
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const troves = await getAllTroveInfo();
-  const downloads = await filterTroves(troves, options.downloadFolder);
+  const downloads = await filterTroves(
+    troves,
+    options.downloadFolder,
+    options.dedup
+  );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -836,14 +878,24 @@ async function checksums() {
     .requiredOption(
       '-t, --auth-token <auth-token>',
       'You must specify your authentication cookie from your browser (_simpleauth_sess)'
-    );
+    )
+    .option('--no-dedup', 'Do not dedup the downloads');
 
   program
     .command('all')
     .description('Download all available items')
     .action(all);
   program.command('trove').description('Download trove items').action(trove);
-  program.command('ebooks').description('Download ebooks').action(ebooks);
+  program
+    .command('ebooks')
+    .description('Download ebooks')
+    .argument(
+      '[formats]',
+      'Format(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "cbz,pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
+      myParseArray,
+      SUPPORTED_FORMATS
+    )
+    .action(ebooks);
   program.command('cleanup').description('Cleanup old files').action(cleanup);
   program
     .command('cleanuptrove')
