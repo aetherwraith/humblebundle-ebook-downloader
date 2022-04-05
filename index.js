@@ -27,6 +27,8 @@ const packageInfo = JSON.parse(
 );
 const userAgent = `HumbleBundle-Ebook-Downloader/${packageInfo.version}`;
 const SUPPORTED_FORMATS = ['cbz', 'epub', 'pdf_hd', 'pdf', 'mobi'];
+const formatsFileName = 'formats.json';
+const dedupFileName = 'dedup.json';
 
 let authToken, fileCheckQueue, downloadQueue, checksumCache;
 let totalDownloads = 0;
@@ -105,6 +107,28 @@ function loadChecksumCache(downloadFolder) {
   return checksumCache;
 }
 
+function loadDedupStatus(options) {
+  const dedupFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(dedupFileName)
+  );
+  if (!existsSync(dedupFilePath)) {
+    writeFileSync(dedupFilePath, JSON.stringify(options.dedup));
+    return options.dedup;
+  } else {
+    return JSON.parse(readFileSync(dedupFilePath, { encoding: 'utf8' }));
+  }
+}
+
+function writeDedupFile(options) {
+  const dedupFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(dedupFileName)
+  );
+
+  writeFileSync(dedupFilePath, JSON.stringify(options.dedup));
+}
+
 function getRequestHeaders() {
   return {
     Accept: 'application/json',
@@ -131,7 +155,7 @@ function normalizeFormat(format) {
 function getExtension(format) {
   switch (format.toLowerCase()) {
     case 'pdf_hd':
-      return '.pdf';
+      return '.hd.pdf';
     default:
       return `.${format}`;
   }
@@ -189,7 +213,7 @@ const readdirRecursive = location =>
 
 const getExistingDownloads = downloadFolder =>
   readdirRecursive(downloadFolder)
-    .filter(file => !file.includes('checksums.json'))
+    .filter(file => !file.includes('.json'))
     .map(file => {
       let cacheKey = file.replace(downloadFolder, '');
       if (cacheKey.startsWith('/')) {
@@ -695,6 +719,7 @@ async function clean(options, downloads) {
 
 async function all() {
   const options = program.opts();
+  writeDedupFile(options);
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
@@ -729,6 +754,7 @@ async function all() {
 
 async function trove() {
   const options = program.opts();
+  writeDedupFile(options);
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const troves = await getAllTroveInfo();
@@ -764,6 +790,27 @@ async function ebooks(formats) {
   const options = program.opts();
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
+
+  const formatsFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(formatsFileName)
+  );
+
+  writeDedupFile(options);
+
+  if (!existsSync(formatsFilePath)) {
+    if (!formats) {
+      formats = SUPPORTED_FORMATS;
+    }
+    writeFileSync(formatsFilePath, JSON.stringify(formats));
+  } else {
+    if (!formats) {
+      formats = JSON.parse(readFileSync(formatsFilePath, { encoding: 'utf8' }));
+    } else {
+      writeFileSync(formatsFilePath, JSON.stringify(formats));
+    }
+  }
+
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterEbooks(
@@ -799,12 +846,14 @@ async function cleanup() {
   const options = program.opts();
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
+  const dedup = loadDedupStatus(options);
+
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterOrders(
     orderInfo,
     options.downloadFolder,
-    options.dedup
+    dedup
   );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
@@ -815,6 +864,20 @@ async function cleanup() {
 
 async function cleanupEbooks() {
   const options = program.opts();
+  const dedup = loadDedupStatus(options);
+
+  const formatsFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(formatsFileName)
+  );
+  let formats;
+  if (!existsSync(formatsFilePath)) {
+    writeFileSync(formatsFilePath, JSON.stringify(SUPPORTED_FORMATS));
+    formats = SUPPORTED_FORMATS;
+  } else {
+    formats = JSON.parse(readFileSync(formatsFilePath, { encoding: 'utf8' }));
+  }
+
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
@@ -822,7 +885,8 @@ async function cleanupEbooks() {
   const downloads = await filterEbooks(
     orderInfo,
     options.downloadFolder,
-    options.dedup
+    formats,
+    dedup
   );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
@@ -835,12 +899,10 @@ async function cleanupTrove() {
   const options = program.opts();
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
+  const dedup = loadDedupStatus(options);
+
   const troves = await getAllTroveInfo();
-  const downloads = await filterTroves(
-    troves,
-    options.downloadFolder,
-    options.dedup
-  );
+  const downloads = await filterTroves(troves, options.downloadFolder, dedup);
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
@@ -892,8 +954,7 @@ async function checksums() {
     .argument(
       '[formats]',
       'Format(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "cbz,pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
-      myParseArray,
-      SUPPORTED_FORMATS
+      myParseArray
     )
     .action(ebooks);
   program.command('cleanup').description('Cleanup old files').action(cleanup);
