@@ -352,18 +352,22 @@ async function filterOrders(orders, downloadFolder, dedup) {
               });
             }
             if (!existing) {
-              downloads.push({
-                bundle: order.product.human_name,
-                // download: struct,
-                name: subproduct.human_name,
-                cacheKey,
-                fileName,
-                downloadPath,
-                filePath,
-                url,
-                sha1: struct.sha1,
-                md5: struct.md5,
-              });
+              if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
+                downloads.push({
+                  bundle: order.product.human_name,
+                  // download: struct,
+                  name: subproduct.human_name,
+                  cacheKey,
+                  fileName,
+                  downloadPath,
+                  filePath,
+                  url,
+                  sha1: struct.sha1,
+                  md5: struct.md5,
+                });
+              } else {
+                console.log(`Potential duplicate purchase ${cacheKey}`);
+              }
             }
           }
         });
@@ -489,16 +493,20 @@ async function filterTroves(troves, downloadFolder, dedup) {
           );
         }
         if (!existing) {
-          downloads.push({
-            download,
-            name: trovey['human-name'],
-            cacheKey,
-            fileName,
-            downloadPath,
-            filePath,
-            sha1: download.sha1,
-            md5: download.md5,
-          });
+          if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
+            downloads.push({
+              download,
+              name: trovey['human-name'],
+              cacheKey,
+              fileName,
+              downloadPath,
+              filePath,
+              sha1: download.sha1,
+              md5: download.md5,
+            });
+          } else {
+            console.log(`Potential duplicate purchase ${cacheKey}`);
+          }
         }
       }
     });
@@ -578,18 +586,23 @@ async function filterEbooks(ebookBundles, downloadFolder, formats, dedup) {
                     sanitizeFilename(fileName)
                   );
                   const url = new URL(struct.url.web);
-                  downloads.push({
-                    bundle: bundle.product.human_name,
-                    // download: struct,
-                    name: subproduct.human_name,
-                    cacheKey,
-                    fileName,
-                    downloadPath,
-                    filePath,
-                    url,
-                    sha1: struct.sha1,
-                    md5: struct.md5,
-                  });
+                  if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
+                    // in case we have duplicate purchases check the cacheKey for uniqueness
+                    downloads.push({
+                      bundle: bundle.product.human_name,
+                      // download: struct,
+                      name: subproduct.human_name,
+                      cacheKey,
+                      fileName,
+                      downloadPath,
+                      filePath,
+                      url,
+                      sha1: struct.sha1,
+                      md5: struct.md5,
+                    });
+                  } else {
+                    console.log(`Potential duplicate purchase ${cacheKey}`);
+                  }
                 }
               }
             })
