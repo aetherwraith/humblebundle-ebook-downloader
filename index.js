@@ -574,9 +574,11 @@ async function filterEbooks(ebookBundles, downloadFolder, formats, dedup) {
                     downloadFolder,
                     sanitizeFilename(bundle.product.human_name)
                   );
-                  const fileName = `${subproduct.human_name.trim()}${getExtension(
-                    normalizeFormat(struct.name)
-                  )}`;
+                  const url = new URL(struct.url.web);
+                  const fileName = `${path.basename(
+                    url.pathname,
+                    path.extname(url.pathname)
+                  )}${getExtension(normalizeFormat(struct.name))}`;
                   const filePath = path.resolve(
                     downloadPath,
                     sanitizeFilename(fileName)
@@ -585,7 +587,6 @@ async function filterEbooks(ebookBundles, downloadFolder, formats, dedup) {
                     sanitizeFilename(bundle.product.human_name),
                     sanitizeFilename(fileName)
                   );
-                  const url = new URL(struct.url.web);
                   if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
                     // in case we have duplicate purchases check the cacheKey for uniqueness
                     downloads.push({
