@@ -30,6 +30,7 @@ const userAgent = `HumbleBundle-Ebook-Downloader/${packageInfo.version}`;
 const SUPPORTED_FORMATS = ['cbz', 'epub', 'pdf_hd', 'pdf', 'mobi'];
 const formatsFileName = 'formats.json';
 const dedupFileName = 'dedup.json';
+const bundleFoldersFileName = 'bundleFolders.json';
 
 let authToken, fileCheckQueue, downloadQueue, checksumCache;
 let totalDownloads = 0;
@@ -145,6 +146,52 @@ async function checkDedupStatus(options) {
       writeDedupFile(options);
     } else {
       options.dedup = dedup;
+    }
+  }
+  rl.close();
+}
+
+function loadbundleFoldersStatus(options) {
+  const bundleFoldersFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(bundleFoldersFileName)
+  );
+  if (!existsSync(bundleFoldersFilePath)) {
+    writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
+    return options.bundleFolders;
+  } else {
+    return JSON.parse(readFileSync(bundleFoldersFilePath, { encoding: 'utf8' }));
+  }
+}
+
+function writebundleFoldersFile(options) {
+  const bundleFoldersFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(bundleFoldersFileName)
+  );
+
+  writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
+}
+
+async function checkbundleFoldersStatus(options) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  const prompt = query => new Promise(resolve => rl.question(query, resolve));
+
+  const bundleFoldersStatus = loadbundleFoldersStatus(options);
+  if (options.bundleFolders !== bundleFoldersStatus) {
+    console.log(
+      `Bundle folder option differs from saved: ${options.bundleFolders} | ${bundleFoldersStatus}`
+    );
+    const useNewbundleFolders = await prompt(
+      'Use new bundle folder setting (Y/N)?'
+    );
+    if (useNewbundleFolders.toLowerCase() === 'y') {
+      writebundleFoldersFile(options);
+    } else {
+      options.bundleFolders = bundleFoldersStatus;
     }
   }
   rl.close();
@@ -362,7 +409,7 @@ async function updateHash(download) {
   checksumCache[download.cacheKey] = await fileHash(download);
 }
 
-async function filterOrders(orders, downloadFolder, dedup) {
+async function filterOrders(orders, downloadFolder, dedup, bundleFolders) {
   console.log(
     `${colors.yellow(orders.length)} bundles containing downloadable items`
   );
@@ -382,7 +429,7 @@ async function filterOrders(orders, downloadFolder, dedup) {
             );
             const downloadPath = path.resolve(
               downloadFolder,
-              sanitizeFilename(order.product.human_name),
+              bundleFolders ? sanitizeFilename(order.product.human_name) : '',
               sanitizeFilename(subproduct.human_name)
             );
             const filePath = path.resolve(downloadPath, fileName);
@@ -565,7 +612,13 @@ async function filterTroves(troves, downloadFolder, dedup) {
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function filterEbooks(ebookBundles, downloadFolder, formats, dedup) {
+async function filterEbooks(
+  ebookBundles,
+  downloadFolder,
+  formats,
+  dedup,
+  bundleFolders
+) {
   // priority of format to download cbz -> epub -> pdf_hd -> pdf -> mobi
   console.log(
     `${colors.yellow(ebookBundles.length)} bundles containing ebooks`
@@ -622,7 +675,10 @@ async function filterEbooks(ebookBundles, downloadFolder, formats, dedup) {
                   }
                   const downloadPath = path.resolve(
                     downloadFolder,
-                    sanitizeFilename(bundle.product.human_name)
+                    bundleFolders
+                      ? sanitizeFilename(bundle.product.human_name)
+                      : '',
+                    sanitizeFilename(subproduct.human_name)
                   );
                   const url = new URL(struct.url.web);
                   const fileName = `${path.basename(
@@ -783,12 +839,17 @@ async function clean(options, downloads) {
       delete checksumCache[cacheKey];
     }
   });
-  console.log(`Removed ${colors.yellow(removedFiles)} files and ${colors.yellow(removedChecksums)} checksums`);
+  console.log(
+    `Removed ${colors.yellow(removedFiles)} files and ${colors.yellow(
+      removedChecksums
+    )} checksums`
+  );
 }
 
 async function all() {
   const options = program.opts();
   await checkDedupStatus(options);
+  await checkbundleFoldersStatus(options);
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
@@ -796,7 +857,8 @@ async function all() {
   const downloads = await filterOrders(
     orderInfo,
     options.downloadFolder,
-    options.dedup
+    options.dedup,
+    options.bundleFolders
   );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
@@ -862,6 +924,8 @@ async function ebooks(formats) {
 
   await checkDedupStatus(options);
 
+  await checkbundleFoldersStatus(options);
+
   const loadedFormats = loadFormats(options, formats);
   if (
     (formats &&
@@ -894,7 +958,8 @@ async function ebooks(formats) {
     orderInfo,
     options.downloadFolder,
     formats,
-    options.dedup
+    options.dedup,
+    options.bundleFolders
   );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
@@ -924,6 +989,7 @@ async function cleanup() {
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const dedup = loadDedupStatus(options);
+  const bundleFolders = loadbundleFoldersStatus(options);
 
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
@@ -942,6 +1008,7 @@ async function cleanup() {
 async function cleanupEbooks() {
   const options = program.opts();
   const dedup = loadDedupStatus(options);
+  const bundleFolders = loadbundleFoldersStatus(options);
 
   const formatsFilePath = path.resolve(
     options.downloadFolder,
@@ -963,7 +1030,8 @@ async function cleanupEbooks() {
     orderInfo,
     options.downloadFolder,
     formats,
-    dedup
+    dedup,
+    bundleFolders
   );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
@@ -1018,7 +1086,11 @@ async function checksums() {
       '-t, --auth-token <auth-token>',
       'You must specify your authentication cookie from your browser (_simpleauth_sess)'
     )
-    .option('--no-dedup', 'Do not dedup the downloads');
+    .option('--no-dedup', 'Do not dedup the downloads')
+    .option(
+      '--no-bundle-folders',
+      'Do not arrange downloads in bundle folders'
+    );
 
   program
     .command('all')
