@@ -21,6 +21,7 @@ import path from 'path';
 import cliProgress from 'cli-progress';
 import { createHash } from 'crypto';
 import https from 'https';
+import readline from 'readline';
 
 const packageInfo = JSON.parse(
   readFileSync('./package.json', { encoding: 'utf8' })
@@ -127,6 +128,51 @@ function writeDedupFile(options) {
   );
 
   writeFileSync(dedupFilePath, JSON.stringify(options.dedup));
+}
+
+async function checkDedupStatus(options) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  const prompt = query => new Promise(resolve => rl.question(query, resolve));
+
+  const dedup = loadDedupStatus(options);
+  if (options.dedup !== dedup) {
+    console.log(`Dedup option differs from saved: ${options.dedup} | ${dedup}`);
+    const useNewDedup = await prompt('Use new dedup setting (Y/N)?');
+    if (useNewDedup.toLowerCase() === 'y') {
+      writeDedupFile(options);
+    } else {
+      options.dedup = dedup;
+    }
+  }
+  rl.close();
+}
+
+function loadFormats(options, formats) {
+  const formatsFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(formatsFileName)
+  );
+
+  if (!existsSync(formatsFilePath)) {
+    if (!formats) {
+      formats = SUPPORTED_FORMATS;
+    }
+    writeFileSync(formatsFilePath, JSON.stringify(formats));
+  } else {
+    formats = JSON.parse(readFileSync(formatsFilePath, { encoding: 'utf8' }));
+  }
+  return formats;
+}
+
+function writeFormatsFile(options, formats) {
+  const formatsFilePath = path.resolve(
+    options.downloadFolder,
+    sanitizeFilename(formatsFileName)
+  );
+  writeFileSync(formatsFilePath, JSON.stringify(formats));
 }
 
 function getRequestHeaders() {
@@ -368,6 +414,8 @@ async function filterOrders(orders, downloadFolder, dedup) {
               } else {
                 console.log(`Potential duplicate purchase ${cacheKey}`);
               }
+            } else {
+              console.log(`Potential duplicate purchase ${cacheKey}`);
             }
           }
         });
@@ -507,6 +555,8 @@ async function filterTroves(troves, downloadFolder, dedup) {
           } else {
             console.log(`Potential duplicate purchase ${cacheKey}`);
           }
+        } else {
+          console.log(`Potential duplicate purchase ${cacheKey}`);
         }
       }
     });
@@ -712,6 +762,7 @@ async function downloadTroveItem(download) {
 async function clean(options, downloads) {
   const existingDownloads = getExistingDownloads(options.downloadFolder);
   console.log('Removing files');
+  let removedFiles = 0;
   existingDownloads.forEach(existingDownload => {
     if (
       !downloads.some(
@@ -719,21 +770,25 @@ async function clean(options, downloads) {
       )
     ) {
       console.log(`Deleting extra file: ${existingDownload.cacheKey}`);
+      removedFiles += 1;
       unlinkSync(existingDownload.filePath);
     }
   });
   console.log('Removing checksums from cache');
+  let removedChecksums = 0;
   Object.keys(checksumCache).forEach(cacheKey => {
     if (!downloads.some(download => cacheKey === download.cacheKey)) {
       console.log(`Removing checksum from cache: ${cacheKey}`);
+      removedChecksums += 1;
       delete checksumCache[cacheKey];
     }
   });
+  console.log(`Removed ${colors.yellow(removedFiles)} files and ${colors.yellow(removedChecksums)} checksums`);
 }
 
 async function all() {
   const options = program.opts();
-  writeDedupFile(options);
+  await checkDedupStatus(options);
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
@@ -768,7 +823,7 @@ async function all() {
 
 async function trove() {
   const options = program.opts();
-  writeDedupFile(options);
+  await checkDedupStatus(options);
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const troves = await getAllTroveInfo();
@@ -805,24 +860,32 @@ async function ebooks(formats) {
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
 
-  const formatsFilePath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(formatsFileName)
-  );
+  await checkDedupStatus(options);
 
-  writeDedupFile(options);
-
-  if (!existsSync(formatsFilePath)) {
-    if (!formats) {
-      formats = SUPPORTED_FORMATS;
+  const loadedFormats = loadFormats(options, formats);
+  if (
+    (formats &&
+      formats.length !== loadedFormats.length &&
+      !formats.every(v => loadedFormats.includes(v))) ||
+    (!formats &&
+      loadedFormats.length !== SUPPORTED_FORMATS.length &&
+      !loadedFormats.every(v => SUPPORTED_FORMATS.includes(v)))
+  ) {
+    console.log(
+      `Loaded formats differ from saved: ${formats} | ${loadedFormats}`
+    );
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    const prompt = query => new Promise(resolve => rl.question(query, resolve));
+    const useNewFormats = await prompt('Use new formats (Y/N)?');
+    rl.close();
+    if (useNewFormats.toLowerCase() === 'y') {
+      writeFormatsFile(options, formats);
     }
-    writeFileSync(formatsFilePath, JSON.stringify(formats));
   } else {
-    if (!formats) {
-      formats = JSON.parse(readFileSync(formatsFilePath, { encoding: 'utf8' }));
-    } else {
-      writeFileSync(formatsFilePath, JSON.stringify(formats));
-    }
+    formats = loadedFormats;
   }
 
   const orderList = await getOrderList();
