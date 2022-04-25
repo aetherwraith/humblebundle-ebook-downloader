@@ -822,7 +822,7 @@ async function clean(options, downloads) {
   existingDownloads.forEach(existingDownload => {
     if (
       !downloads.some(
-        download => existingDownload.cacheKey === download.cacheKey
+        download => existingDownload.filePath === download.filePath
       )
     ) {
       console.log(`Deleting extra file: ${existingDownload.cacheKey}`);
