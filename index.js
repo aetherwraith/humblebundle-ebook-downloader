@@ -160,7 +160,9 @@ function loadbundleFoldersStatus(options) {
     writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
     return options.bundleFolders;
   } else {
-    return JSON.parse(readFileSync(bundleFoldersFilePath, { encoding: 'utf8' }));
+    return JSON.parse(
+      readFileSync(bundleFoldersFilePath, { encoding: 'utf8' })
+    );
   }
 }
 
@@ -624,99 +626,88 @@ async function filterEbooks(
     `${colors.yellow(ebookBundles.length)} bundles containing ebooks`
   );
   let downloads = [];
-  ebookBundles
-    // .filter(bundle =>
-    //   bundle.subproducts.find(subproduct =>
-    //     subproduct.downloads.filter(
-    //       download => download.platform.toLowerCase() === 'ebook'
-    //     )
-    //   )
-    // )
-    .forEach(bundle => {
-      let date = new Date(bundle.created);
-      bundle.subproducts.forEach(subproduct => {
-        // const filteredDownloads = subproduct.downloads.filter(
-        //   download => download.platform.toLowerCase() === 'ebook'
-        // );
-        const filteredDownloads = subproduct.downloads;
-        formats.forEach(format => {
-          filteredDownloads.forEach(download =>
-            download.download_struct.forEach(struct => {
+  ebookBundles.forEach(bundle => {
+    let date = new Date(bundle.created);
+    bundle.subproducts.forEach(subproduct => {
+      const filteredDownloads = subproduct.downloads;
+      formats.forEach(format => {
+        filteredDownloads.forEach(download =>
+          download.download_struct.forEach(struct => {
+            if (
+              struct.name &&
+              struct.url &&
+              normalizeFormat(struct.name) === format
+            ) {
               if (
-                struct.name &&
-                struct.url &&
-                normalizeFormat(struct.name) === format
+                struct.name.toLowerCase().localeCompare('download') === 0 &&
+                struct.url.web.toLowerCase().indexOf('.pdf') < 0
               ) {
-                if (
-                  struct.name.toLowerCase().localeCompare('download') === 0 &&
-                  struct.url.web.toLowerCase().indexOf('.pdf') < 0
-                ) {
-                  return;
-                }
-                preFilteredDownloads++;
-                const uploaded_at = new Date(struct.uploaded_at);
-                if (uploaded_at > date) date = uploaded_at;
-                // TODO: check hash matches too
-                let existing = false;
-                if (dedup) {
-                  existing = downloads.some(
-                    elem => elem.name === subproduct.human_name
+                return;
+              }
+              preFilteredDownloads++;
+              const uploaded_at = new Date(struct.uploaded_at);
+              if (uploaded_at > date) date = uploaded_at;
+              // TODO: check hash matches too
+              let existing;
+              if (dedup) {
+                existing = downloads.find(
+                  elem => elem.machineName === subproduct.machine_name
+                );
+              }
+              if (
+                !existing ||
+                (date > existing.date && struct.name === existing.structName)
+              ) {
+                if (existing) {
+                  downloads = downloads.filter(
+                    elem => elem.machineName !== existing.machineName
                   );
                 }
-                if (
-                  !existing ||
-                  (date > existing.date &&
-                    struct.name === existing.download.name)
-                ) {
-                  if (existing) {
-                    downloads = downloads.filter(
-                      elem => elem.name !== existing.name
-                    );
-                  }
-                  const downloadPath = path.resolve(
-                    downloadFolder,
-                    bundleFolders
-                      ? sanitizeFilename(bundle.product.human_name)
-                      : '',
-                    sanitizeFilename(subproduct.human_name)
-                  );
-                  const url = new URL(struct.url.web);
-                  const fileName = `${path.basename(
-                    url.pathname,
-                    path.extname(url.pathname)
-                  )}${getExtension(normalizeFormat(struct.name))}`;
-                  const filePath = path.resolve(
+                const downloadPath = path.resolve(
+                  downloadFolder,
+                  bundleFolders
+                    ? sanitizeFilename(bundle.product.human_name)
+                    : '',
+                  sanitizeFilename(subproduct.human_name)
+                );
+                const url = new URL(struct.url.web);
+                const fileName = `${subproduct.machine_name}${getExtension(
+                  normalizeFormat(struct.name)
+                )}`;
+                const filePath = path.resolve(
+                  downloadPath,
+                  sanitizeFilename(fileName)
+                );
+                const cacheKey = path.join(
+                  sanitizeFilename(bundle.product.human_name),
+                  sanitizeFilename(fileName)
+                );
+                if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
+                  // in case we have duplicate purchases check the cacheKey for uniqueness
+                  downloads.push({
+                    bundle: bundle.product.human_name,
+                    // download: struct,
+                    name: subproduct.human_name,
+                    cacheKey,
+                    fileName,
                     downloadPath,
-                    sanitizeFilename(fileName)
-                  );
-                  const cacheKey = path.join(
-                    sanitizeFilename(bundle.product.human_name),
-                    sanitizeFilename(fileName)
-                  );
-                  if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
-                    // in case we have duplicate purchases check the cacheKey for uniqueness
-                    downloads.push({
-                      bundle: bundle.product.human_name,
-                      // download: struct,
-                      name: subproduct.human_name,
-                      cacheKey,
-                      fileName,
-                      downloadPath,
-                      filePath,
-                      url,
-                      sha1: struct.sha1,
-                      md5: struct.md5,
-                    });
-                  } else {
-                    console.log(`Potential duplicate purchase ${cacheKey}`);
-                  }
+                    filePath,
+                    url,
+                    sha1: struct.sha1,
+                    md5: struct.md5,
+                    machineName: subproduct.machine_name,
+                    structName: struct.name,
+                  });
+                } else {
+                  console.log(`Potential duplicate purchase ${cacheKey}`);
                 }
               }
-            })
-          );
-        });
+            }
+          })
+        );
       });
     });
+  });
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -976,7 +967,7 @@ async function ebooks(formats) {
   await downloadQueue.onIdle();
 
   progress.stop();
-  await clean(options, downloads);
+  // await clean(options, downloads);
   console.log(
     `${colors.green(
       'Done!'
@@ -996,7 +987,8 @@ async function cleanup() {
   const downloads = await filterOrders(
     orderInfo,
     options.downloadFolder,
-    dedup
+    dedup,
+    bundleFolders
   );
   console.log(
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
