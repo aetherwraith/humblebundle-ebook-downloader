@@ -447,7 +447,7 @@ async function filterOrders(orders, downloadFolder, dedup, bundleFolders) {
               });
             }
             if (!existing) {
-              if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
+              if (!downloads.some(elem => elem.filePath === filePath)) {
                 downloads.push({
                   bundle: order.product.human_name,
                   // download: struct,
@@ -590,7 +590,7 @@ async function filterTroves(troves, downloadFolder, dedup) {
           );
         }
         if (!existing) {
-          if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
+          if (!downloads.some(elem => elem.filePath === filePath)) {
             downloads.push({
               download,
               name: trovey['human-name'],
@@ -682,7 +682,7 @@ async function filterEbooks(
                   sanitizeFilename(bundle.product.human_name),
                   sanitizeFilename(fileName)
                 );
-                if (!downloads.some(elem => elem.cacheKey === cacheKey)) {
+                if (!downloads.some(elem => elem.filePath === filePath)) {
                   // in case we have duplicate purchases check the cacheKey for uniqueness
                   downloads.push({
                     bundle: bundle.product.human_name,
@@ -967,7 +967,7 @@ async function ebooks(formats) {
   await downloadQueue.onIdle();
 
   progress.stop();
-  // await clean(options, downloads);
+  await clean(options, downloads);
   console.log(
     `${colors.green(
       'Done!'
