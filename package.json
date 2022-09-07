@@ -18,8 +18,7 @@
     "commander": "^9.4.0",
     "hasha": "^5.2.2",
     "mkdirp": "^1.0.4",
-    "p-map": "^5.5.0",
-    "p-queue": "^7.3.0",
+    "radash": "^7.1.0",
     "sanitize-filename": "^1.6.3"
   },
   "devDependencies": {

@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-import PMap from 'p-map';
-import PQueue from 'p-queue';
 import http2 from 'http2';
 import { program } from 'commander';
 import colors from 'colors';
@@ -22,6 +20,7 @@ import cliProgress from 'cli-progress';
 import { createHash } from 'crypto';
 import https from 'https';
 import readline from 'readline';
+import { map, parallel, retry } from 'radash';
 
 const packageInfo = JSON.parse(
   readFileSync('./package.json', { encoding: 'utf8' })
@@ -151,7 +150,7 @@ async function checkDedupStatus(options) {
   rl.close();
 }
 
-function loadbundleFoldersStatus(options) {
+function loadBundleFoldersStatus(options) {
   const bundleFoldersFilePath = path.resolve(
     options.downloadFolder,
     sanitizeFilename(bundleFoldersFileName)
@@ -166,7 +165,7 @@ function loadbundleFoldersStatus(options) {
   }
 }
 
-function writebundleFoldersFile(options) {
+function writeBundleFoldersFile(options) {
   const bundleFoldersFilePath = path.resolve(
     options.downloadFolder,
     sanitizeFilename(bundleFoldersFileName)
@@ -175,14 +174,14 @@ function writebundleFoldersFile(options) {
   writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
 }
 
-async function checkbundleFoldersStatus(options) {
+async function checkBundleFoldersStatus(options) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
   const prompt = query => new Promise(resolve => rl.question(query, resolve));
 
-  const bundleFoldersStatus = loadbundleFoldersStatus(options);
+  const bundleFoldersStatus = loadBundleFoldersStatus(options);
   if (options.bundleFolders !== bundleFoldersStatus) {
     console.log(
       `Bundle folder option differs from saved: ${options.bundleFolders} | ${bundleFoldersStatus}`
@@ -191,7 +190,7 @@ async function checkbundleFoldersStatus(options) {
       'Use new bundle folder setting (Y/N)?'
     );
     if (useNewbundleFolders.toLowerCase() === 'y') {
-      writebundleFoldersFile(options);
+      writeBundleFoldersFile(options);
     } else {
       options.bundleFolders = bundleFoldersStatus;
     }
@@ -254,38 +253,6 @@ function getExtension(format) {
     default:
       return `.${format}`;
   }
-}
-
-function createFileCheckQueue(concurrency) {
-  fileCheckQueue = new PQueue({ concurrency });
-
-  bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
-
-  fileCheckQueue.on('add', () => {
-    countFileChecks++;
-    const total = bars.checkq.total;
-    bars.checkq.setTotal(total + 1);
-  });
-
-  fileCheckQueue.on('completed', () => {
-    bars.checkq.increment();
-  });
-}
-
-function createDownloadQueue(concurrency) {
-  downloadQueue = new PQueue({ concurrency });
-
-  bars.downloadq = progress.create(0, 0, { file: 'Download Queue' });
-
-  downloadQueue.on('add', () => {
-    countDownloads++;
-    const total = bars.downloadq.total;
-    bars.downloadq.setTotal(total + 1);
-  });
-
-  downloadQueue.on('completed', () => {
-    bars.downloadq.increment();
-  });
 }
 
 /* Prepend the given path segment */
@@ -357,7 +324,7 @@ async function getAllOrderInfo(gameKeys, concurrency) {
   console.log(`Fetching order information for ${gameKeys.length} bundles`);
 
   bars[bundlesBar] = progress.create(gameKeys.length, 0, { file: bundlesBar });
-  return PMap(gameKeys, getOrderInfo, { concurrency }).then(
+  return parallel(concurrency, gameKeys, getOrderInfo).then(
     async allBundles => {
       progress.remove(bars[bundlesBar]);
       bars.delete(bundlesBar);
@@ -378,6 +345,9 @@ async function getOrderInfo(gameKey) {
 }
 
 async function fileHash(download) {
+  if (!bars.checkq) {
+    bars.checkq = progress.create(0, 0, { file: 'File Check Queue' });
+  }
   return new Promise((resolve, reject) => {
     // Algorithm depends on availability of OpenSSL on platform
     // Another algorithms: 'sha1', 'md5', 'sha256', 'sha512' ...
@@ -387,6 +357,9 @@ async function fileHash(download) {
     bars[download.cacheKey] = progress.create(size, 0, {
       file: colors.yellow(`Hashing: ${download.cacheKey}`),
     });
+    countFileChecks++;
+    const total = bars.checkq.total;
+    bars.checkq.setTotal(total + 1);
     try {
       let s = createReadStream(download.filePath);
       s.on('data', function (data) {
@@ -399,6 +372,7 @@ async function fileHash(download) {
         const hash = { sha1: shasum.digest('hex'), md5: md5sum.digest('hex') };
         progress.remove(bars[download.cacheKey]);
         bars.delete(download.cacheKey);
+        bars.checkq.increment();
         return resolve(hash);
       });
     } catch (error) {
@@ -711,54 +685,62 @@ async function filterEbooks(
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function doDownload(download, retries = 0) {
-  return new Promise((done, reject) => {
-    const handleDownloadError = request => {
-      request.destroy();
-      progress.remove(bars[download.cacheKey]);
-      bars.delete(download.cacheKey);
-      if (retries < 300) {
-        downloadQueue.add(() => doDownload(download, retries + 1));
-        done();
-      } else {
-        reject(`${download.cacheKey}: Download failed ${retries} times`);
-      }
-    };
+async function doDownload(download) {
+  if (!bars.downloadq) {
+    bars.downloadq = progress.create(0, 0, { file: 'Download Queue' });
+  }
+  countDownloads++;
+  const total = bars.downloadq.total;
+  bars.downloadq.setTotal(total + 1);
 
-    const req = https.get(
-      download.url,
-      { timeout: 60000 },
-      async function (res) {
-        const size = Number(res.headers['content-length']);
-        let got = 0;
-        let shasum = createHash('sha1');
-        let md5sum = createHash('md5');
-        bars[download.cacheKey] = progress.create(size, 0, {
-          file: colors.green(download.cacheKey),
-        });
-        res.on('data', data => {
-          shasum.update(data);
-          md5sum.update(data);
-          got += Buffer.byteLength(data);
-          bars[download.cacheKey].increment(Buffer.byteLength(data));
-        });
-        res.pipe(createWriteStream(download.filePath));
-        res.on('end', () => {
-          checksumCache[download.cacheKey] = {
-            sha1: shasum.digest('hex'),
-            md5: md5sum.digest('hex'),
-          };
+  return retry(
+    { times: 10, delay: 1000 },
+    async () =>
+      new Promise((done, reject) => {
+        const handleDownloadError = request => {
+          console.log(request);
+          request.destroy();
           progress.remove(bars[download.cacheKey]);
           bars.delete(download.cacheKey);
-          doneDownloads++;
-          bars.downloads.increment();
-          done();
-        });
-        res.on('error', () => handleDownloadError(req));
-      }
-    );
-    req.on('error', () => handleDownloadError(req));
-  });
+          reject(`${download.cacheKey}: Download failed`);
+        };
+
+        const req = https.get(
+          download.url,
+          { timeout: 60000 },
+          async function (res) {
+            const size = Number(res.headers['content-length']);
+            let got = 0;
+            let shasum = createHash('sha1');
+            let md5sum = createHash('md5');
+            bars[download.cacheKey] = progress.create(size, 0, {
+              file: colors.green(download.cacheKey),
+            });
+            res.on('data', data => {
+              shasum.update(data);
+              md5sum.update(data);
+              got += Buffer.byteLength(data);
+              bars[download.cacheKey].increment(Buffer.byteLength(data));
+            });
+            res.pipe(createWriteStream(download.filePath));
+            res.on('end', () => {
+              checksumCache[download.cacheKey] = {
+                sha1: shasum.digest('hex'),
+                md5: md5sum.digest('hex'),
+              };
+              progress.remove(bars[download.cacheKey]);
+              bars.delete(download.cacheKey);
+              doneDownloads++;
+              bars.downloads.increment();
+              bars.downloadq.increment();
+              done();
+            });
+            res.on('error', () => handleDownloadError(req));
+          }
+        );
+        req.on('error', () => handleDownloadError(req));
+      })
+  );
 }
 
 async function checkSignatureMatch(download, downloaded = false) {
@@ -786,23 +768,23 @@ async function checkSignatureMatch(download, downloaded = false) {
 async function downloadItem(download) {
   await mkdirp(download.downloadPath);
 
-  if (await fileCheckQueue.add(() => checkSignatureMatch(download))) {
+  if (await checkSignatureMatch(download)) {
     doneDownloads++;
     bars.downloads.increment();
   } else {
-    return downloadQueue.add(() => doDownload(download));
+    return doDownload(download);
   }
 }
 
 async function downloadTroveItem(download) {
   await mkdirp(download.downloadPath);
 
-  if (await fileCheckQueue.add(() => checkSignatureMatch(download))) {
+  if (await checkSignatureMatch(download)) {
     doneDownloads++;
     bars.downloads.increment();
   } else {
     const url = await getTroveDownloadUrl(download);
-    return downloadQueue.add(() => doDownload({ url, ...download }));
+    return doDownload({ url, ...download });
   }
 }
 
@@ -840,11 +822,11 @@ async function clean(options, downloads) {
 async function all() {
   const options = program.opts();
   await checkDedupStatus(options);
-  await checkbundleFoldersStatus(options);
+  await checkBundleFoldersStatus(options);
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
-  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const orderInfo = await getAllOrderInfo(orderList, options.downloadLimit);
   const downloads = await filterOrders(
     orderInfo,
     options.downloadFolder,
@@ -855,15 +837,9 @@ async function all() {
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
   totalDownloads = downloads.length;
-  bars.downloads = progress.create(downloads.length, 0, {
-    file: 'Downloads',
-  });
-  createDownloadQueue(options.downloadLimit);
-  createFileCheckQueue(options.downloadLimit);
-  await Promise.all(downloads.map(download => downloadItem(download)));
+  bars.downloads = progress.create(totalDownloads, 0, {file: 'All'});
 
-  await fileCheckQueue.onIdle();
-  await downloadQueue.onIdle();
+  await parallel(options.downloadLimit, downloads, downloadItem);
 
   progress.stop();
   await clean(options, downloads);
@@ -889,15 +865,9 @@ async function trove() {
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
   totalDownloads = downloads.length;
-  bars.downloads = progress.create(downloads.length, 0, {
-    file: 'Downloads',
-  });
-  createDownloadQueue(options.downloadLimit);
-  createFileCheckQueue(options.downloadLimit);
-  await Promise.all(downloads.map(download => downloadTroveItem(download)));
+  bars.downloads = progress.create(totalDownloads, 0, { file: 'All' });
 
-  await fileCheckQueue.onIdle();
-  await downloadQueue.onIdle();
+  await parallel(options.downloadLimit, downloads, downloadTroveItem);
 
   progress.stop();
   await clean(options, downloads);
@@ -915,7 +885,7 @@ async function ebooks(formats) {
 
   await checkDedupStatus(options);
 
-  await checkbundleFoldersStatus(options);
+  await checkBundleFoldersStatus(options);
 
   const loadedFormats = loadFormats(options, formats);
   if (
@@ -944,7 +914,7 @@ async function ebooks(formats) {
   }
 
   const orderList = await getOrderList();
-  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const orderInfo = await getAllOrderInfo(orderList, options.downloadLimit);
   const downloads = await filterEbooks(
     orderInfo,
     options.downloadFolder,
@@ -956,15 +926,9 @@ async function ebooks(formats) {
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
   totalDownloads = downloads.length;
-  bars.downloads = progress.create(downloads.length, 0, {
-    file: 'Downloads',
-  });
-  createDownloadQueue(options.downloadLimit);
-  createFileCheckQueue(options.downloadLimit);
-  await Promise.all(downloads.map(download => downloadItem(download)));
+  bars.downloads = progress.create(totalDownloads, 0, { file: 'All' });
 
-  await fileCheckQueue.onIdle();
-  await downloadQueue.onIdle();
+  await parallel(options.downloadLimit, downloads, downloadItem);
 
   progress.stop();
   await clean(options, downloads);
@@ -980,10 +944,10 @@ async function cleanup() {
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const dedup = loadDedupStatus(options);
-  const bundleFolders = loadbundleFoldersStatus(options);
+  const bundleFolders = loadBundleFoldersStatus(options);
 
   const orderList = await getOrderList();
-  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const orderInfo = await getAllOrderInfo(orderList, options.downloadLimit);
   const downloads = await filterOrders(
     orderInfo,
     options.downloadFolder,
@@ -1000,7 +964,7 @@ async function cleanup() {
 async function cleanupEbooks() {
   const options = program.opts();
   const dedup = loadDedupStatus(options);
-  const bundleFolders = loadbundleFoldersStatus(options);
+  const bundleFolders = loadBundleFoldersStatus(options);
 
   const formatsFilePath = path.resolve(
     options.downloadFolder,
@@ -1017,7 +981,7 @@ async function cleanupEbooks() {
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
-  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  const orderInfo = await getAllOrderInfo(orderList, options.downloadLimit);
   const downloads = await filterEbooks(
     orderInfo,
     options.downloadFolder,
