@@ -698,7 +698,6 @@ async function doDownload(download) {
     async () =>
       new Promise((done, reject) => {
         const handleDownloadError = request => {
-          console.log(request);
           request.destroy();
           progress.remove(bars[download.cacheKey]);
           bars.delete(download.cacheKey);
@@ -837,7 +836,7 @@ async function all() {
     `original: ${preFilteredDownloads} filtered: ${downloads.length}`
   );
   totalDownloads = downloads.length;
-  bars.downloads = progress.create(totalDownloads, 0, {file: 'All'});
+  bars.downloads = progress.create(totalDownloads, 0, { file: 'All' });
 
   await parallel(options.downloadLimit, downloads, downloadItem);
 
