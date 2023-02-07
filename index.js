@@ -137,6 +137,7 @@ async function checkOptions(options) {
   const prompt = query => new Promise(resolve => rl.question(query, resolve));
 
   const readOptions = await loadOptionsFile(options);
+  console.log({readOptions});
   if (
     readOptions.hasOwnProperty('dedup') &&
     options.dedup !== readOptions.dedup
@@ -165,7 +166,7 @@ async function checkOptions(options) {
   }
   if (
     readOptions.hasOwnProperty('formats') &&
-    options.formats.length !== readOptions.formats.length &&
+    options.formats.length !== readOptions.formats.length ||
     !options.formats.every(v => readOptions.formats.includes(v))
   ) {
     console.log(
@@ -173,7 +174,7 @@ async function checkOptions(options) {
     );
     const prompt = query => new Promise(resolve => rl.question(query, resolve));
     const useNewFormats = await prompt('Use new formats (Y/N)?');
-    if (useNewFormats.toLowerCase() === 'y') {
+    if (useNewFormats.toLowerCase() !== 'y') {
       options.formats = readOptions.formats;
     }
   }
