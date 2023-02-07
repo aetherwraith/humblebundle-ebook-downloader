@@ -24,10 +24,7 @@ import url from 'node:url';
 import readline from 'node:readline';
 import { Command } from 'commander';
 
-const {
-  HTTP2_HEADER_PATH,
-  HTTP2_HEADER_STATUS,
-} = http2.constants;
+const { HTTP2_HEADER_PATH, HTTP2_HEADER_STATUS } = http2.constants;
 
 const program = new Command();
 
@@ -90,27 +87,26 @@ function loadChecksumCache(downloadFolder) {
     downloadFolder,
     sanitizeFilename(cacheFileName)
   );
+
   checksumCache = {};
   if (!existsSync(cacheFilePath)) {
     mkdirpSync(downloadFolder);
     writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
   } else {
-    console.log('exists')
     checksumCache = JSON.parse(
       readFileSync(cacheFilePath, { encoding: 'utf8' })
     );
   }
 
-  function exitHandler(bob) {
-    console.log({bob});
+  function exitHandler() {
     writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
     progress.stop();
     program.error('Something bad happened');
   }
 
-  process.on('SIGINT', exitHandler('sigint'));
+  process.on('SIGINT', exitHandler);
 
-  process.on('exit', exitHandler('exit'));
+  process.on('exit', exitHandler);
 
   console.log(
     `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
@@ -327,7 +323,6 @@ const getExistingDownloads = downloadFolder =>
     });
 
 async function fetchOrder(urlPath) {
-  return new Promise((resolve, reject) =>{
   const client = http2.connect('https://www.humblebundle.com');
 
   const req = client.request({
@@ -337,7 +332,6 @@ async function fetchOrder(urlPath) {
   req.on('response', headers => {
     console.log({ headers });
     console.log(headers[HTTP2_HEADER_STATUS]);
-    if (headers[HTTP2_HEADER_STATUS] !== 200) program.error('Check your cookie!');
 
     let data = '';
     req.on('error', err => {
@@ -350,14 +344,19 @@ async function fetchOrder(urlPath) {
     req.on('data', chunk => {
       data += chunk;
     });
+  });
+
+  await new Promise(resolve =>
     req.on('close', () => {
       client.close();
       client.destroy();
-      resolve(JSON.parse(data));
+      resolve();
     })
+  );
 
-  });
-  })
+  if (data.includes('Unauthorized')) program.error('Check your cookie');
+
+  return JSON.parse(data);
 }
 
 async function getOrderList() {
@@ -857,12 +856,10 @@ async function clean(options, downloads) {
 
 async function all() {
   const options = program.opts();
-  console.log({options});
   await checkDedupStatus(options);
   await checkbundleFoldersStatus(options);
   authToken = options.authToken;
   checksumCache = loadChecksumCache(options.downloadFolder);
-  console.log(2);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterOrders(
