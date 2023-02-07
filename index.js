@@ -1,44 +1,31 @@
 #!/usr/bin/env node
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { version } = require('./package.json');
 import { basename, join, resolve } from 'node:path';
 import PMap from 'p-map';
 import PQueue from 'p-queue';
 import http2 from 'node:http2';
 import colors from 'colors';
-import {
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  readdirSync,
-  readFileSync,
-  rmdirSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { mkdirp, mkdirpSync } from 'mkdirp';
+import { readFile, writeFile, readdir, stat, rmdir } from 'node:fs/promises';
+import { mkdirp } from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import cliProgress from 'cli-progress';
 import { createHash } from 'node:crypto';
-import url from 'node:url';
 import readline from 'node:readline';
 import { Command } from 'commander';
 
-const {
-  HTTP2_HEADER_PATH,
-  HTTP2_HEADER_STATUS,
-} = http2.constants;
+const { HTTP2_HEADER_PATH, HTTP2_HEADER_STATUS } = http2.constants;
 
 const program = new Command();
 
-const packageInfo = JSON.parse(
-  readFileSync('./package.json', { encoding: 'utf8' })
-);
-const userAgent = `HumbleBundle-Ebook-Downloader/${packageInfo.version}`;
+const userAgent = `HumbleBundle-Ebook-Downloader/${version}`;
 const SUPPORTED_FORMATS = ['cbz', 'epub', 'pdf_hd', 'pdf', 'mobi'];
 const formatsFileName = 'formats.json';
 const dedupFileName = 'dedup.json';
 const bundleFoldersFileName = 'bundleFolders.json';
+const optionsFileName = 'options.json';
 
 let authToken, fileCheckQueue, downloadQueue, checksumCache;
 let totalDownloads = 0;
@@ -83,7 +70,7 @@ function myParseArray(value, dummyPrevious) {
   return parsedValue;
 }
 
-function loadChecksumCache(downloadFolder) {
+async function loadChecksumCache(downloadFolder) {
   // load cache file of checksums
   const cacheFileName = 'checksums.json';
   const cacheFilePath = resolve(
@@ -91,26 +78,16 @@ function loadChecksumCache(downloadFolder) {
     sanitizeFilename(cacheFileName)
   );
   checksumCache = {};
-  if (!existsSync(cacheFilePath)) {
-    mkdirpSync(downloadFolder);
-    writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
-  } else {
-    console.log('exists')
-    checksumCache = JSON.parse(
-      readFileSync(cacheFilePath, { encoding: 'utf8' })
-    );
-  }
-
-  function exitHandler(bob) {
-    console.log({bob});
-    writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
-    progress.stop();
-    program.error('Something bad happened');
-  }
-
-  process.on('SIGINT', exitHandler('sigint'));
-
-  process.on('exit', exitHandler('exit'));
+  await readFile(cacheFilePath, { encoding: 'utf8' })
+    .then(checksums => {
+      checksumCache = JSON.parse(checksums);
+    })
+    .catch(async () => {
+      await mkdirp(downloadFolder);
+      await writeFile(cacheFilePath, JSON.stringify(checksumCache), {
+        encoding: 'utf8',
+      });
+    });
 
   console.log(
     `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
@@ -118,119 +95,92 @@ function loadChecksumCache(downloadFolder) {
   return checksumCache;
 }
 
-function loadDedupStatus(options) {
-  const dedupFilePath = resolve(
+async function writeOptionsFile(options) {
+  const optionsFilePath = resolve(
     options.downloadFolder,
-    sanitizeFilename(dedupFileName)
+    sanitizeFilename(optionsFileName)
   );
-  if (!existsSync(dedupFilePath)) {
-    writeFileSync(dedupFilePath, JSON.stringify(options.dedup));
-    return options.dedup;
-  } else {
-    return JSON.parse(readFileSync(dedupFilePath, { encoding: 'utf8' }));
-  }
+  await mkdirp(options.downloadFolder);
+  await writeFile(
+    optionsFilePath,
+    JSON.stringify({
+      bundleFolders: options.bundleFolders,
+      dedup: options.dedup,
+      formats: options.formats,
+    })
+  );
 }
 
-function writeDedupFile(options) {
-  const dedupFilePath = resolve(
+async function loadOptionsFile(options) {
+  const optionsFilePath = resolve(
     options.downloadFolder,
-    sanitizeFilename(dedupFileName)
+    sanitizeFilename(optionsFileName)
   );
-
-  writeFileSync(dedupFilePath, JSON.stringify(options.dedup));
+  return readFile(optionsFilePath, { encoding: 'utf8' })
+    .then(readOptions => {
+      return JSON.parse(readOptions);
+    })
+    .catch(async () => {
+      return {
+        bundleFolders: options.bundleFolders,
+        dedup: options.dedup,
+        formats: options.formats,
+      };
+    });
 }
 
-async function checkDedupStatus(options) {
+async function checkOptions(options) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
   const prompt = query => new Promise(resolve => rl.question(query, resolve));
 
-  const dedup = loadDedupStatus(options);
-  if (options.dedup !== dedup) {
-    console.log(`Dedup option differs from saved: ${options.dedup} | ${dedup}`);
-    const useNewDedup = await prompt('Use new dedup setting (Y/N)?');
-    if (useNewDedup.toLowerCase() === 'y') {
-      writeDedupFile(options);
-    } else {
-      options.dedup = dedup;
-    }
-  }
-  rl.close();
-}
-
-function loadbundleFoldersStatus(options) {
-  const bundleFoldersFilePath = resolve(
-    options.downloadFolder,
-    sanitizeFilename(bundleFoldersFileName)
-  );
-  if (!existsSync(bundleFoldersFilePath)) {
-    writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
-    return options.bundleFolders;
-  } else {
-    return JSON.parse(
-      readFileSync(bundleFoldersFilePath, { encoding: 'utf8' })
-    );
-  }
-}
-
-function writebundleFoldersFile(options) {
-  const bundleFoldersFilePath = resolve(
-    options.downloadFolder,
-    sanitizeFilename(bundleFoldersFileName)
-  );
-
-  writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
-}
-
-async function checkbundleFoldersStatus(options) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  const prompt = query => new Promise(resolve => rl.question(query, resolve));
-
-  const bundleFoldersStatus = loadbundleFoldersStatus(options);
-  if (options.bundleFolders !== bundleFoldersStatus) {
+  const readOptions = await loadOptionsFile(options);
+  if (
+    readOptions.hasOwnProperty('dedup') &&
+    options.dedup !== readOptions.dedup
+  ) {
     console.log(
-      `Bundle folder option differs from saved: ${options.bundleFolders} | ${bundleFoldersStatus}`
+      `Dedup option differs from saved: ${options.dedup} | ${readOptions.dedup}`
     );
-    const useNewbundleFolders = await prompt(
-      'Use new bundle folder setting (Y/N)?'
-    );
-    if (useNewbundleFolders.toLowerCase() === 'y') {
-      writebundleFoldersFile(options);
-    } else {
-      options.bundleFolders = bundleFoldersStatus;
+    const useNewDedup = await prompt('Use new dedup setting (Y/N)?');
+    if (useNewDedup.toLowerCase() !== 'y') {
+      options.dedup = readOptions.dedup;
     }
   }
+  if (
+    readOptions.hasOwnProperty('bundleFolders') &&
+    options.bundleFolders !== readOptions.bundleFolders
+  ) {
+    console.log(
+      `bundleFolders option differs from saved: ${options.bundleFolders} | ${readOptions.bundleFolders}`
+    );
+    const useNewBundleFolders = await prompt(
+      'Use new bundleFolders setting (Y/N)?'
+    );
+    if (useNewBundleFolders.toLowerCase() !== 'y') {
+      options.bundleFolders = readOptions.bundleFolders;
+    }
+  }
+  if (
+    readOptions.hasOwnProperty('formats') &&
+    options.formats.length !== readOptions.formats.length &&
+    !options.formats.every(v => readOptions.formats.includes(v))
+  ) {
+    console.log(
+      `Loaded formats differ from saved: ${options.formats} | ${readOptions.formats}`
+    );
+    const prompt = query => new Promise(resolve => rl.question(query, resolve));
+    const useNewFormats = await prompt('Use new formats (Y/N)?');
+    if (useNewFormats.toLowerCase() === 'y') {
+      options.formats = readOptions.formats;
+    }
+  }
+
+  await writeOptionsFile(options);
+
   rl.close();
-}
-
-function loadFormats(options, formats) {
-  const formatsFilePath = resolve(
-    options.downloadFolder,
-    sanitizeFilename(formatsFileName)
-  );
-
-  if (!existsSync(formatsFilePath)) {
-    if (!formats) {
-      formats = SUPPORTED_FORMATS;
-    }
-    writeFileSync(formatsFilePath, JSON.stringify(formats));
-  } else {
-    formats = JSON.parse(readFileSync(formatsFilePath, { encoding: 'utf8' }));
-  }
-  return formats;
-}
-
-function writeFormatsFile(options, formats) {
-  const formatsFilePath = resolve(
-    options.downloadFolder,
-    sanitizeFilename(formatsFileName)
-  );
-  writeFileSync(formatsFilePath, JSON.stringify(formats));
 }
 
 function getRequestHeaders() {
@@ -297,67 +247,80 @@ function createDownloadQueue(concurrency) {
   });
 }
 
+// TODO: refactor this to a function
 /* Prepend the given path segment */
 const prependPathSegment = pathSegment => location =>
   join(pathSegment, location);
 
 /* fs.readdir but with relative paths */
-const readdirPreserveRelativePath = location =>
-  readdirSync(location).map(prependPathSegment(location));
+async function readdirPreserveRelativePath(location) {
+  return readdir(location).then(objects => {
+    console.log({ objects });
+    objects.map(prependPathSegment(location));
+  });
+}
 
 /* Recursive fs.readdir but with relative paths */
-const readdirRecursive = location =>
-  readdirPreserveRelativePath(location).reduce(
-    (result, currentValue) =>
-      statSync(currentValue).isDirectory()
-        ? result.concat(readdirRecursive(currentValue))
-        : result.concat(currentValue),
-    []
+async function readdirRecursive(location) {
+  return readdirPreserveRelativePath(location).then(dir =>
+    dir.reduce(
+      async (result, currentValue) =>
+        await stat(currentValue).then(
+          async stats =>
+            stats.isDirectory()
+              ? result.concat(await readdirRecursive(currentValue))
+              : result.concat(currentValue),
+          []
+        )
+    )
   );
+}
 
-const getExistingDownloads = downloadFolder =>
-  readdirRecursive(downloadFolder)
-    .filter(file => !file.includes('.json'))
-    .map(file => {
-      let cacheKey = file.replace(downloadFolder, '');
-      if (cacheKey.startsWith('/')) {
-        cacheKey = cacheKey.substring(1);
-      }
-      return { filePath: file, cacheKey };
-    });
-
+async function getExistingDownloads(downloadFolder) {
+  return readdirRecursive(downloadFolder).then(dir =>
+    dir
+      .filter(file => !file.includes('.json'))
+      .map(file => {
+        let cacheKey = file.replace(downloadFolder, '');
+        if (cacheKey.startsWith('/')) {
+          cacheKey = cacheKey.substring(1);
+        }
+        return { filePath: file, cacheKey };
+      })
+  );
+}
 async function fetchOrder(urlPath) {
-  return new Promise((resolve, reject) =>{
-  const client = http2.connect('https://www.humblebundle.com');
+  return new Promise((resolve, reject) => {
+    const client = http2.connect('https://www.humblebundle.com');
 
-  const req = client.request({
-    ...getRequestHeaders(),
-    ':path': urlPath,
-  });
-  req.on('response', headers => {
-    console.log({ headers });
-    console.log(headers[HTTP2_HEADER_STATUS]);
-    if (headers[HTTP2_HEADER_STATUS] !== 200) program.error('Check your cookie!');
-
-    let data = '';
-    req.on('error', err => {
-      req.close();
-      client.close();
-      client.destroy();
-      program.error(err);
+    const req = client.request({
+      ...getRequestHeaders(),
+      ':path': urlPath,
     });
-    req.setEncoding('utf8');
-    req.on('data', chunk => {
-      data += chunk;
-    });
-    req.on('close', () => {
-      client.close();
-      client.destroy();
-      resolve(JSON.parse(data));
-    })
+    req.on('response', headers => {
+      console.log({ headers });
+      console.log(headers[HTTP2_HEADER_STATUS]);
+      if (headers[HTTP2_HEADER_STATUS] !== 200)
+        program.error('Check your cookie!');
 
+      let data = '';
+      req.on('error', err => {
+        req.close();
+        client.close();
+        client.destroy();
+        program.error(err);
+      });
+      req.setEncoding('utf8');
+      req.on('data', chunk => {
+        data += chunk;
+      });
+      req.on('close', () => {
+        client.close();
+        client.destroy();
+        resolve(JSON.parse(data));
+      });
+    });
   });
-  })
 }
 
 async function getOrderList() {
@@ -838,7 +801,7 @@ async function clean(options, downloads) {
     }
   });
   console.log('Removing empty folders');
-  cleanupEmptyFolders(options.downloadFolder);
+  await cleanupEmptyFolders(options.downloadFolder);
   console.log('Removing checksums from cache');
   let removedChecksums = 0;
   Object.keys(checksumCache).forEach(cacheKey => {
@@ -857,11 +820,10 @@ async function clean(options, downloads) {
 
 async function all() {
   const options = program.opts();
-  console.log({options});
   await checkDedupStatus(options);
   await checkbundleFoldersStatus(options);
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = await loadChecksumCache(options.downloadFolder);
   console.log(2);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
@@ -898,7 +860,7 @@ async function trove() {
   const options = program.opts();
   await checkDedupStatus(options);
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = await loadChecksumCache(options.downloadFolder);
   const troves = await getAllTroveInfo();
   const downloads = await filterTroves(
     troves,
@@ -931,37 +893,12 @@ async function trove() {
 async function ebooks(formats) {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
-
-  await checkDedupStatus(options);
-
-  await checkbundleFoldersStatus(options);
-
-  const loadedFormats = loadFormats(options, formats);
-  if (
-    (formats &&
-      formats.length !== loadedFormats.length &&
-      !formats.every(v => loadedFormats.includes(v))) ||
-    (!formats &&
-      loadedFormats.length !== SUPPORTED_FORMATS.length &&
-      !loadedFormats.every(v => SUPPORTED_FORMATS.includes(v)))
-  ) {
-    console.log(
-      `Loaded formats differ from saved: ${formats} | ${loadedFormats}`
-    );
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    const prompt = query => new Promise(resolve => rl.question(query, resolve));
-    const useNewFormats = await prompt('Use new formats (Y/N)?');
-    rl.close();
-    if (useNewFormats.toLowerCase() === 'y') {
-      writeFormatsFile(options, formats);
-    }
-  } else {
-    formats = loadedFormats;
-  }
+  checksumCache = await loadChecksumCache(options.downloadFolder);
+  if (!options.formats) options.formats = SUPPORTED_FORMATS;
+  console.log({'before': options})
+  await checkOptions(options);
+  console.log({'after': options})
+  process.exit(0);
 
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
@@ -998,7 +935,7 @@ async function ebooks(formats) {
 async function cleanup() {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = await loadChecksumCache(options.downloadFolder);
   const dedup = loadDedupStatus(options);
   const bundleFolders = loadbundleFoldersStatus(options);
 
@@ -1035,7 +972,7 @@ async function cleanupEbooks() {
   }
 
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = await loadChecksumCache(options.downloadFolder);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterEbooks(
@@ -1055,8 +992,8 @@ async function cleanupEbooks() {
 async function cleanupTrove() {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
-  const dedup = loadDedupStatus(options);
+  checksumCache = await loadChecksumCache(options.downloadFolder);
+  const dedup = await loadDedupStatus(options);
 
   const troves = await getAllTroveInfo();
   const downloads = await filterTroves(troves, options.downloadFolder, dedup);
@@ -1070,42 +1007,49 @@ async function cleanupTrove() {
 async function checksums() {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = await loadChecksumCache(options.downloadFolder);
   createFileCheckQueue(options.downloadLimit);
-  getExistingDownloads(options.downloadFolder).forEach(download => {
-    fileCheckQueue.add(() => updateHash(download));
-  });
+  await getExistingDownloads(options.downloadFolder).then(downloads =>
+    downloads.forEach(download => {
+      fileCheckQueue.add(() => updateHash(download));
+    })
+  );
   await fileCheckQueue.onIdle();
   progress.stop();
   console.log(`${colors.green('Updated:')} ${colors.blue(countFileChecks)}`);
 }
 
-export const cleanupEmptyFolders = (folder, exclude = ['node_modules']) => {
-  if (!statSync(folder).isDirectory()) return;
+async function cleanupEmptyFolders(folder, exclude = ['node_modules']) {
+  console.log('Cleaning empty folders');
+  return stat(folder).then(async stats => {
+    if (!stats.isDirectory()) return;
 
-  const folderName = basename(folder);
-  if (exclude && exclude.includes(folderName)) {
-    console.log(`skipping: ${folderName}`);
-    return;
-  }
+    const folderName = basename(folder);
+    if (exclude && exclude.includes(folderName)) {
+      console.log(`skipping: ${folderName}`);
+      return;
+    }
 
-  let files = readdirSync(folder);
+    let files = await readdir(folder);
 
-  if (files.length > 0) {
-    files.forEach(file => cleanupEmptyFolders(join(folder, file), exclude));
-    // Re-evaluate files; after deleting sub-folders we may have an empty parent folder now.
-    files = readdirSync(folder);
-  }
+    if (files.length > 0) {
+      for (const file of files) {
+        await cleanupEmptyFolders(join(folder, file), exclude);
+      }
+      // Re-evaluate files; after deleting sub-folders we may have an empty parent folder now.
+      files = await readdir(folder);
+    }
 
-  if (files.length === 0) {
-    console.log(`removing: ${folder}`);
-    rmdirSync(folder);
-  }
-};
+    if (files.length === 0) {
+      console.log(`removing: ${folder}`);
+      await rmdir(folder);
+    }
+  });
+}
 
 (async function () {
   program
-    .version(packageInfo.version)
+    .version(version)
     .requiredOption(
       '-d, --download-folder <downloader_folder>',
       'Download folder',
@@ -1138,7 +1082,8 @@ export const cleanupEmptyFolders = (folder, exclude = ['node_modules']) => {
     .argument(
       '[formats]',
       'Format(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "cbz,pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
-      myParseArray
+      myParseArray,
+      SUPPORTED_FORMATS
     )
     .action(ebooks);
   program.command('cleanup').description('Cleanup old files').action(cleanup);
