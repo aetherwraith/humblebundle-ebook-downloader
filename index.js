@@ -8,7 +8,14 @@ import PMap from 'p-map';
 import PQueue from 'p-queue';
 import http2 from 'node:http2';
 import colors from 'colors';
-import { readFile, writeFile, readdir, stat, rmdir } from 'node:fs/promises';
+import {
+  readFile,
+  writeFile,
+  readdir,
+  stat,
+  rmdir,
+  access,
+} from 'node:fs/promises';
 import { mkdirp } from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import cliProgress from 'cli-progress';
@@ -77,22 +84,21 @@ async function loadChecksumCache(downloadFolder) {
     downloadFolder,
     sanitizeFilename(cacheFileName)
   );
-  checksumCache = {};
-  await readFile(cacheFilePath, { encoding: 'utf8' })
+  return readFile(cacheFilePath, { encoding: 'utf8' })
     .then(checksums => {
-      checksumCache = JSON.parse(checksums);
+      const parsed = JSON.parse(checksums);
+      console.log(
+        `${colors.green(Object.keys(parsed).length)} checksums loaded`
+      );
+      return parsed;
     })
     .catch(async () => {
       await mkdirp(downloadFolder);
       await writeFile(cacheFilePath, JSON.stringify(checksumCache), {
         encoding: 'utf8',
       });
+      return {};
     });
-
-  console.log(
-    `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
-  );
-  return checksumCache;
 }
 
 async function writeOptionsFile(options) {
@@ -137,7 +143,6 @@ async function checkOptions(options) {
   const prompt = query => new Promise(resolve => rl.question(query, resolve));
 
   const readOptions = await loadOptionsFile(options);
-  console.log({readOptions});
   if (
     readOptions.hasOwnProperty('dedup') &&
     options.dedup !== readOptions.dedup
@@ -145,9 +150,13 @@ async function checkOptions(options) {
     console.log(
       `Dedup option differs from saved: ${options.dedup} | ${readOptions.dedup}`
     );
-    const useNewDedup = await prompt('Use new dedup setting (Y/N)?');
-    if (useNewDedup.toLowerCase() !== 'y') {
+    if (options.useSavedOptions) {
       options.dedup = readOptions.dedup;
+    } else {
+      const useNewDedup = await prompt('Use new dedup setting (Y/N)?');
+      if (useNewDedup.toLowerCase() !== 'y') {
+        options.dedup = readOptions.dedup;
+      }
     }
   }
   if (
@@ -157,25 +166,33 @@ async function checkOptions(options) {
     console.log(
       `bundleFolders option differs from saved: ${options.bundleFolders} | ${readOptions.bundleFolders}`
     );
-    const useNewBundleFolders = await prompt(
-      'Use new bundleFolders setting (Y/N)?'
-    );
-    if (useNewBundleFolders.toLowerCase() !== 'y') {
+    if (options.useSavedOptions) {
       options.bundleFolders = readOptions.bundleFolders;
+    } else {
+      const useNewBundleFolders = await prompt(
+        'Use new bundleFolders setting (Y/N)?'
+      );
+      if (useNewBundleFolders.toLowerCase() !== 'y') {
+        options.bundleFolders = readOptions.bundleFolders;
+      }
     }
   }
   if (
-    readOptions.hasOwnProperty('formats') &&
-    options.formats.length !== readOptions.formats.length ||
-    !options.formats.every(v => readOptions.formats.includes(v))
+    (readOptions.hasOwnProperty('formats') &&
+      options.formats.length !== readOptions.formats.length) ||
+    !options.formats.every(v => readOptions.formats.includes(v)) ||
+    JSON.stringify(options.formats) !== JSON.stringify(readOptions.formats)
   ) {
     console.log(
       `Loaded formats differ from saved: ${options.formats} | ${readOptions.formats}`
     );
-    const prompt = query => new Promise(resolve => rl.question(query, resolve));
-    const useNewFormats = await prompt('Use new formats (Y/N)?');
-    if (useNewFormats.toLowerCase() !== 'y') {
+    if (options.useSavedOptions) {
       options.formats = readOptions.formats;
+    } else {
+      const useNewFormats = await prompt('Use new formats (Y/N)?');
+      if (useNewFormats.toLowerCase() !== 'y') {
+        options.formats = readOptions.formats;
+      }
     }
   }
 
@@ -692,7 +709,7 @@ async function doDownload(download, retries = 0) {
       request.destroy();
       progress.remove(bars[download.cacheKey]);
       bars.delete(download.cacheKey);
-      if (retries < 300) {
+      if (retries < 3) {
         downloadQueue.add(() => doDownload(download, retries + 1));
         done();
       } else {
@@ -703,6 +720,8 @@ async function doDownload(download, retries = 0) {
     console.log({ url: download.url });
 
     const client = http2.connect(download.url);
+
+    console.log('here');
 
     const req = client.request({
       ':path': `${download.url.pathname}${download.url.search}`,
@@ -742,25 +761,30 @@ async function doDownload(download, retries = 0) {
 }
 
 async function checkSignatureMatch(download, downloaded = false) {
-  let verified = false;
-  if (existsSync(download.filePath)) {
-    let hash;
-    if (checksumCache[download.cacheKey] && !downloaded) {
-      hash = checksumCache[download.cacheKey];
-    } else {
-      hash = await fileHash(download);
-      checksumCache[download.cacheKey] = hash;
-    }
-    verified =
-      (download.sha1 && download.sha1 === hash.sha1) ||
-      (download.md5 && download.md5 === hash.md5);
-    // assume remote checksum is bad
-    // if (!checked) {
-    //   const newhash = await fileHash(download);
-    //   checked = newhash.sha1 === hash.sha1 || newhash.md5 === hash.md5;
-    // }
-  }
-  return verified;
+  await access(download.filePath)
+    .then(async () => {
+      let verified = false;
+      let hash;
+      if (checksumCache[download.cacheKey] && !downloaded) {
+        hash = checksumCache[download.cacheKey];
+      } else {
+        hash = await fileHash(download);
+        checksumCache[download.cacheKey] = hash;
+      }
+      verified =
+        (download.sha1 && download.sha1 === hash.sha1) ||
+        (download.md5 && download.md5 === hash.md5);
+      // assume remote checksum is bad
+      // if (!checked) {
+      //   const newhash = await fileHash(download);
+      //   checked = newhash.sha1 === hash.sha1 || newhash.md5 === hash.md5;
+      // }
+
+      return verified;
+    })
+    .catch(() => {
+      return false;
+    });
 }
 
 async function downloadItem(download) {
@@ -893,20 +917,18 @@ async function trove() {
 
 async function ebooks(formats) {
   const options = program.opts();
+  options.formats = formats;
+  await checkOptions(options);
+
   authToken = options.authToken;
   checksumCache = await loadChecksumCache(options.downloadFolder);
-  if (!options.formats) options.formats = SUPPORTED_FORMATS;
-  console.log({'before': options})
-  await checkOptions(options);
-  console.log({'after': options})
-  process.exit(0);
 
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterEbooks(
     orderInfo,
     options.downloadFolder,
-    formats,
+    options.formats,
     options.dedup,
     options.bundleFolders
   );
@@ -1066,11 +1088,12 @@ async function cleanupEmptyFolders(folder, exclude = ['node_modules']) {
       '-t, --auth-token <auth-token>',
       'You must specify your authentication cookie from your browser (_simpleauth_sess)'
     )
-    .option('--no-dedup', 'Do not dedup the downloads')
+    .option('-e, --no-dedup', 'Do not dedup the downloads')
     .option(
-      '--no-bundle-folders',
+      '-f, --no-bundle-folders',
       'Do not arrange downloads in bundle folders'
-    );
+    )
+    .option('-o, --use-saved-options', 'Use the saved options without asking');
 
   program
     .command('all')
