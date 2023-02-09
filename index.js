@@ -1,33 +1,27 @@
 #!/usr/bin/env node
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { version } = require('./package.json');
-import { basename, join, resolve } from 'node:path';
+import {createRequire} from 'node:module';
+import {basename, join, resolve} from 'node:path';
 import PMap from 'p-map';
 import PQueue from 'p-queue';
 import http2 from 'node:http2';
 import colors from 'colors';
-import {
-  readFile,
-  writeFile,
-  readdir,
-  stat,
-  rmdir,
-  access,
-} from 'node:fs/promises';
-import { mkdirp } from 'mkdirp';
+import {access, readdir, readFile, rmdir, stat, writeFile,} from 'node:fs/promises';
+import {mkdirp} from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import cliProgress from 'cli-progress';
-import { createHash } from 'node:crypto';
+import {createHash} from 'node:crypto';
 import readline from 'node:readline';
-import { Command } from 'commander';
+import {Command} from 'commander';
+import {fetch, getRequestHeaders} from "./utils/httpUtils.js";
+
+const require = createRequire(import.meta.url);
+const { version } = require('./package.json');
 
 const { HTTP2_HEADER_PATH, HTTP2_HEADER_STATUS } = http2.constants;
 
 const program = new Command();
 
-const userAgent = `HumbleBundle-Ebook-Downloader/${version}`;
 const SUPPORTED_FORMATS = ['cbz', 'epub', 'pdf_hd', 'pdf', 'mobi'];
 const formatsFileName = 'formats.json';
 const dedupFileName = 'dedup.json';
@@ -201,15 +195,6 @@ async function checkOptions(options) {
   rl.close();
 }
 
-function getRequestHeaders() {
-  return {
-    Accept: 'application/json',
-    'Accept-Charset': 'utf-8',
-    'User-Agent': userAgent,
-    Cookie: `_simpleauth_sess="${authToken.replace(/^"|"$/g, '')}";`,
-  };
-}
-
 function normalizeFormat(format) {
   switch (format.toLowerCase()) {
     case '.cbz':
@@ -307,43 +292,10 @@ async function getExistingDownloads(downloadFolder) {
       })
   );
 }
-async function fetchOrder(urlPath) {
-  return new Promise((resolve, reject) => {
-    const client = http2.connect('https://www.humblebundle.com');
 
-    const req = client.request({
-      ...getRequestHeaders(),
-      ':path': urlPath,
-    });
-    req.on('response', headers => {
-      console.log({ headers });
-      console.log(headers[HTTP2_HEADER_STATUS]);
-      if (headers[HTTP2_HEADER_STATUS] !== 200)
-        program.error('Check your cookie!');
-
-      let data = '';
-      req.on('error', err => {
-        req.close();
-        client.close();
-        client.destroy();
-        program.error(err);
-      });
-      req.setEncoding('utf8');
-      req.on('data', chunk => {
-        data += chunk;
-      });
-      req.on('close', () => {
-        client.close();
-        client.destroy();
-        resolve(JSON.parse(data));
-      });
-    });
-  });
-}
-
-async function getOrderList() {
+async function getOrderList(authToken) {
   console.log('Fetching all purchased bundles');
-  return fetchOrder('/api/v1/user/order?ajax=true');
+  return fetch('/api/v1/user/order?ajax=true', authToken);
 }
 
 async function getAllOrderInfo(gameKeys, concurrency) {
@@ -362,7 +314,7 @@ async function getAllOrderInfo(gameKeys, concurrency) {
 }
 
 async function getOrderInfo(gameKey) {
-  return fetchOrder(`/api/v1/order/${gameKey.gamekey}?ajax=true`).then(
+  return fetch(`/api/v1/order/${gameKey.gamekey}?ajax=true`).then(
     orderInfo => {
       bars[bundlesBar].increment();
       return orderInfo;
@@ -716,7 +668,7 @@ async function doDownload(download, retries = 0) {
         reject(`${download.cacheKey}: Download failed ${retries} times`);
       }
     };
-
+console.log('fred');
     console.log({ url: download.url });
 
     const client = http2.connect(download.url);
@@ -724,12 +676,11 @@ async function doDownload(download, retries = 0) {
     console.log('here');
 
     const req = client.request({
-      ':path': `${download.url.pathname}${download.url.search}`,
+      ':path': `${download.url.pathname}${download.url.search}`
     });
 
     req.on('response', headers => {
       console.log({ headers });
-      console.log(headers[HTTP2_HEADER_STATUS]);
       const size = Number(headers['content-length']);
       let got = 0;
       let shasum = createHash('sha1');
