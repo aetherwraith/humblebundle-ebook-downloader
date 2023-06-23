@@ -2,7 +2,7 @@
 
 import PMap from 'p-map';
 import PQueue from 'p-queue';
-import http2 from 'http2';
+import http2 from 'node:http2';
 import { program } from 'commander';
 import colors from 'colors';
 import {
@@ -14,14 +14,15 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
-} from 'fs';
-import mkdirp from 'mkdirp';
+} from 'node:fs';
+import { mkdirp } from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
-import path from 'path';
+import path from 'node:path';
 import cliProgress from 'cli-progress';
-import { createHash } from 'crypto';
-import https from 'https';
-import readline from 'readline';
+import { createHash } from 'node:crypto';
+import https from 'node:https';
+import readline from 'node:readline';
+import prettyBytes from 'pretty-bytes';
 
 const packageInfo = JSON.parse(
   readFileSync('./package.json', { encoding: 'utf8' })
@@ -54,6 +55,21 @@ const progress = new cliProgress.MultiBar(
 const bars = new Set();
 
 const bundlesBar = 'bundles';
+
+function formatFileSize(v, options, type) {
+  // padding
+  function autopadding(value, length) {
+    return (options.autopaddingChar + value).slice(-length);
+  }
+
+  switch (type) {
+    case 'percentage':
+      return autopadding(v, 3);
+
+    default:
+      return prettyBytes(v * 1, { minimumFractionDigits: 3 });
+  }
+}
 
 function myParseInt(value, dummyPrevious) {
   const parsedValue = parseInt(value, 10);
@@ -384,9 +400,14 @@ async function fileHash(download) {
     let shasum = createHash('sha1');
     let md5sum = createHash('md5');
     let size = statSync(download.filePath).size;
-    bars[download.cacheKey] = progress.create(size, 0, {
-      file: colors.yellow(`Hashing: ${download.cacheKey}`),
-    });
+    bars[download.cacheKey] = progress.create(
+      size,
+      0,
+      {
+        file: colors.yellow(`Hashing: ${download.cacheKey}`),
+      },
+      { formatValue: formatFileSize }
+    );
     try {
       let s = createReadStream(download.filePath);
       s.on('data', function (data) {
@@ -733,9 +754,14 @@ async function doDownload(download, retries = 0) {
         let got = 0;
         let shasum = createHash('sha1');
         let md5sum = createHash('md5');
-        bars[download.cacheKey] = progress.create(size, 0, {
-          file: colors.green(download.cacheKey),
-        });
+        bars[download.cacheKey] = progress.create(
+          size,
+          0,
+          {
+            file: colors.green(download.cacheKey),
+          },
+          { formatValue: formatFileSize }
+        );
         res.on('data', data => {
           shasum.update(data);
           md5sum.update(data);
