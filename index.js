@@ -3,7 +3,7 @@
 import PMap from 'p-map';
 import PQueue from 'p-queue';
 import http2 from 'node:http2';
-import { program } from 'commander';
+import commander from 'commander';
 import colors from 'colors';
 import {
   createReadStream,
@@ -24,14 +24,12 @@ import https from 'node:https';
 import readline from 'node:readline';
 import prettyBytes from 'pretty-bytes';
 
+const program = new commander.Command();
 const packageInfo = JSON.parse(
   readFileSync('./package.json', { encoding: 'utf8' })
 );
 const userAgent = `HumbleBundle-Ebook-Downloader/${packageInfo.version}`;
 const SUPPORTED_FORMATS = ['cbz', 'epub', 'pdf_hd', 'pdf', 'mobi'];
-const formatsFileName = 'formats.json';
-const dedupFileName = 'dedup.json';
-const bundleFoldersFileName = 'bundleFolders.json';
 
 let authToken, fileCheckQueue, downloadQueue, checksumCache;
 let totalDownloads = 0;
@@ -57,14 +55,9 @@ const bars = new Set();
 const bundlesBar = 'bundles';
 
 function formatFileSize(v, options, type) {
-  // padding
-  function autopadding(value, length) {
-    return (options.autopaddingChar + value).slice(-length);
-  }
-
   switch (type) {
     case 'percentage':
-      return autopadding(v, 3);
+      return v.padStart(3, options.autopaddingChar);
 
     default:
       return prettyBytes(v * 1, { minimumFractionDigits: 3 });
@@ -74,7 +67,7 @@ function formatFileSize(v, options, type) {
 function myParseInt(value, dummyPrevious) {
   const parsedValue = parseInt(value, 10);
   if (isNaN(parsedValue)) {
-    throw new program.InvalidOptionArgumentError(`${value} is not a number.`);
+    throw new commander.InvalidOptionArgumentError(`${value} is not a number.`);
   }
   return parsedValue;
 }
@@ -82,7 +75,7 @@ function myParseInt(value, dummyPrevious) {
 function myParseArray(value, dummyPrevious) {
   const parsedValue = value.split(',');
   if (!parsedValue.every(format => SUPPORTED_FORMATS.includes(format))) {
-    throw new program.InvalidOptionArgumentError(
+    throw new commander.InvalidOptionArgumentError(
       `${value} contains one or more invalid formats. Supported formats are ${SUPPORTED_FORMATS.join(
         ','
       )}`
@@ -125,13 +118,14 @@ function loadChecksumCache(downloadFolder) {
   return checksumCache;
 }
 
-function loadDedupStatus(options) {
-  const dedupFilePath = path.resolve(
+function loadOptions(options) {
+  const optionsFileName = 'options.json';
+  const optionsFilePath = path.resolve(
     options.downloadFolder,
-    sanitizeFilename(dedupFileName)
+    sanitizeFilename(optionsFileName)
   );
-  if (!existsSync(dedupFilePath)) {
-    writeFileSync(dedupFilePath, JSON.stringify(options.dedup));
+  if (!existsSync(optionsFilePath)) {
+    writeFileSync(optionsFilePath, JSON.stringify(options.dedup));
     return options.dedup;
   } else {
     return JSON.parse(readFileSync(dedupFilePath, { encoding: 'utf8' }));
