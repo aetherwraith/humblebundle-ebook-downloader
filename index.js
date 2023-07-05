@@ -15,21 +15,23 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { mkdirp } from 'mkdirp';
+import {mkdirp} from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'node:path';
 import cliProgress from 'cli-progress';
-import { createHash } from 'node:crypto';
+import {createHash} from 'node:crypto';
 import https from 'node:https';
 import readline from 'node:readline';
-import prettyBytes from 'pretty-bytes';
+import {readJsonFile} from "./fileUtils.js";
+import {formatFileSize} from "./formatFileSize.js";
+import {myParseArray, optionParsers} from "./optionParsers.js";
+import {userAgent} from "./userAgent.js";
+import {SUPPORTED_FORMATS} from "./constants.js";
 
 const program = new commander.Command();
 const packageInfo = JSON.parse(
   readFileSync('./package.json', { encoding: 'utf8' })
 );
-const userAgent = `HumbleBundle-Ebook-Downloader/${packageInfo.version}`;
-const SUPPORTED_FORMATS = ['cbz', 'epub', 'pdf_hd', 'pdf', 'mobi'];
 
 let authToken, fileCheckQueue, downloadQueue, checksumCache;
 let totalDownloads = 0;
@@ -50,73 +52,18 @@ const progress = new cliProgress.MultiBar(
   cliProgress.Presets.shades_classic
 );
 
+function exitHandler() {
+  progress.stop();
+}
+
+process.on('SIGINT', exitHandler);
+
+process.on('exit', exitHandler);
+
+
 const bars = new Set();
 
 const bundlesBar = 'bundles';
-
-function formatFileSize(v, options, type) {
-  switch (type) {
-    case 'percentage':
-      return v.padStart(3, options.autopaddingChar);
-
-    default:
-      return prettyBytes(v * 1 || 0, { minimumFractionDigits: 3 });
-  }
-}
-
-function myParseInt(value, dummyPrevious) {
-  const parsedValue = parseInt(value, 10);
-  if (isNaN(parsedValue)) {
-    throw new commander.InvalidOptionArgumentError(`${value} is not a number.`);
-  }
-  return parsedValue;
-}
-
-function myParseArray(value, dummyPrevious) {
-  const parsedValue = value.split(',');
-  if (!parsedValue.every(format => SUPPORTED_FORMATS.includes(format))) {
-    throw new commander.InvalidOptionArgumentError(
-      `${value} contains one or more invalid formats. Supported formats are ${SUPPORTED_FORMATS.join(
-        ','
-      )}`
-    );
-  }
-  return parsedValue;
-}
-
-function loadChecksumCache(downloadFolder) {
-  // load cache file of checksums
-  const cacheFileName = 'checksums.json';
-  const cacheFilePath = path.resolve(
-    downloadFolder,
-    sanitizeFilename(cacheFileName)
-  );
-
-  checksumCache = {};
-  if (!existsSync(cacheFilePath)) {
-    mkdirp(downloadFolder);
-    writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
-  } else {
-    checksumCache = JSON.parse(
-      readFileSync(cacheFilePath, { encoding: 'utf8' })
-    );
-  }
-
-  function exitHandler() {
-    writeFileSync(cacheFilePath, JSON.stringify(checksumCache));
-    progress.stop();
-    process.exit();
-  }
-
-  process.on('SIGINT', exitHandler);
-
-  process.on('exit', exitHandler);
-
-  console.log(
-    `${colors.green(Object.keys(checksumCache).length)} checksums loaded`
-  );
-  return checksumCache;
-}
 
 function loadOptions(options) {
   const optionsFileName = 'options.json';
@@ -128,17 +75,8 @@ function loadOptions(options) {
     writeFileSync(optionsFilePath, JSON.stringify(options.dedup));
     return options.dedup;
   } else {
-    return JSON.parse(readFileSync(dedupFilePath, { encoding: 'utf8' }));
+    return JSON.parse(readFileSync(optionsFilePath, { encoding: 'utf8' }));
   }
-}
-
-function writeDedupFile(options) {
-  const dedupFilePath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(dedupFileName)
-  );
-
-  writeFileSync(dedupFilePath, JSON.stringify(options.dedup));
 }
 
 async function checkDedupStatus(options) {
@@ -159,30 +97,6 @@ async function checkDedupStatus(options) {
     }
   }
   rl.close();
-}
-
-function loadbundleFoldersStatus(options) {
-  const bundleFoldersFilePath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(bundleFoldersFileName)
-  );
-  if (!existsSync(bundleFoldersFilePath)) {
-    writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
-    return options.bundleFolders;
-  } else {
-    return JSON.parse(
-      readFileSync(bundleFoldersFilePath, { encoding: 'utf8' })
-    );
-  }
-}
-
-function writebundleFoldersFile(options) {
-  const bundleFoldersFilePath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(bundleFoldersFileName)
-  );
-
-  writeFileSync(bundleFoldersFilePath, JSON.stringify(options.bundleFolders));
 }
 
 async function checkbundleFoldersStatus(options) {
@@ -207,31 +121,6 @@ async function checkbundleFoldersStatus(options) {
     }
   }
   rl.close();
-}
-
-function loadFormats(options, formats) {
-  const formatsFilePath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(formatsFileName)
-  );
-
-  if (!existsSync(formatsFilePath)) {
-    if (!formats) {
-      formats = SUPPORTED_FORMATS;
-    }
-    writeFileSync(formatsFilePath, JSON.stringify(formats));
-  } else {
-    formats = JSON.parse(readFileSync(formatsFilePath, { encoding: 'utf8' }));
-  }
-  return formats;
-}
-
-function writeFormatsFile(options, formats) {
-  const formatsFilePath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(formatsFileName)
-  );
-  writeFileSync(formatsFilePath, JSON.stringify(formats));
 }
 
 function getRequestHeaders() {
@@ -862,7 +751,7 @@ async function all() {
   await checkDedupStatus(options);
   await checkbundleFoldersStatus(options);
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = readJsonFile(options.downloadFolder);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterOrders(
@@ -898,7 +787,7 @@ async function trove() {
   const options = program.opts();
   await checkDedupStatus(options);
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = readJsonFile(options.downloadFolder);
   const troves = await getAllTroveInfo();
   const downloads = await filterTroves(
     troves,
@@ -931,7 +820,7 @@ async function trove() {
 async function ebooks(formats) {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = readJsonFile(options.downloadFolder);
 
   await checkDedupStatus(options);
 
@@ -998,7 +887,7 @@ async function ebooks(formats) {
 async function cleanup() {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = readJsonFile(options.downloadFolder);
   const dedup = loadDedupStatus(options);
   const bundleFolders = loadbundleFoldersStatus(options);
 
@@ -1035,7 +924,7 @@ async function cleanupEbooks() {
   }
 
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = readJsonFile(options.downloadFolder);
   const orderList = await getOrderList();
   const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   const downloads = await filterEbooks(
@@ -1055,7 +944,7 @@ async function cleanupEbooks() {
 async function cleanupTrove() {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = readJsonFile(options.downloadFolder);
   const dedup = loadDedupStatus(options);
 
   const troves = await getAllTroveInfo();
@@ -1070,7 +959,7 @@ async function cleanupTrove() {
 async function checksums() {
   const options = program.opts();
   authToken = options.authToken;
-  checksumCache = loadChecksumCache(options.downloadFolder);
+  checksumCache = readJsonFile(options.downloadFolder);
   createFileCheckQueue(options.downloadLimit);
   getExistingDownloads(options.downloadFolder).forEach(download => {
     fileCheckQueue.add(() => updateHash(download));
@@ -1091,7 +980,7 @@ async function checksums() {
     .option(
       '-l, --download-limit <download_limit>',
       'Parallel download limit',
-      myParseInt,
+      optionParsers,
       1
     )
     .requiredOption(
