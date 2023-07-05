@@ -67,7 +67,7 @@ function formatFileSize(v, options, type) {
       return autopadding(v, 3);
 
     default:
-      return prettyBytes(v * 1, { minimumFractionDigits: 3 });
+      return prettyBytes(v * 1 || 0, { minimumFractionDigits: 3 });
   }
 }
 
