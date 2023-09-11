@@ -15,18 +15,17 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import {mkdirp} from 'mkdirp';
+import { mkdirp } from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
 import path from 'node:path';
 import cliProgress from 'cli-progress';
-import {createHash} from 'node:crypto';
+import { createHash } from 'node:crypto';
 import https from 'node:https';
 import readline from 'node:readline';
-import {readJsonFile} from "./fileUtils.js";
-import {formatFileSize} from "./formatFileSize.js";
-import {myParseArray, optionParsers} from "./optionParsers.js";
-import {userAgent} from "./userAgent.js";
-import {SUPPORTED_FORMATS} from "./constants.js";
+import { readJsonFile } from 'utils/fileUtils.js';
+import { formatFileSize } from 'utils/formatFileSize.js';
+import { parseArrayOption, parseIntOption } from 'utils/parseOptions.js';
+import { SUPPORTED_FORMATS, userAgent } from 'utils/constants.js';
 
 const program = new commander.Command();
 const packageInfo = JSON.parse(
@@ -59,7 +58,6 @@ function exitHandler() {
 process.on('SIGINT', exitHandler);
 
 process.on('exit', exitHandler);
-
 
 const bars = new Set();
 
@@ -980,7 +978,7 @@ async function checksums() {
     .option(
       '-l, --download-limit <download_limit>',
       'Parallel download limit',
-      optionParsers,
+      parseIntOption,
       1
     )
     .requiredOption(
@@ -1004,7 +1002,7 @@ async function checksums() {
     .argument(
       '[formats]',
       'Format(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "cbz,pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
-      myParseArray
+      parseArrayOption
     )
     .action(ebooks);
   program.command('cleanup').description('Cleanup old files').action(cleanup);
