@@ -1,13 +1,20 @@
-import path from 'node:path';
+import { resolve } from 'node:path';
 import sanitizeFilename from 'sanitize-filename';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import { mkdirp } from 'mkdirp';
 
-export async function readJsonFile(folder, file, ignoreError = true) {
-  const filePath = path.resolve(folder, sanitizeFilename(file));
+export async function readJsonFile(folder, file) {
+  const filePath = resolve(folder, sanitizeFilename(file));
 
-  return JSON.parse(
-    await readFile(filePath, { encoding: 'utf8' }).catch(err => {
-      if (!ignoreError) console.log(`Error reading file ${err}`);
-    })
-  );
+  const contents = await readFile(filePath, { encoding: 'utf8' }).catch(_ => {
+    return '{}';
+  });
+
+  return JSON.parse(contents);
+}
+
+export async function writeJsonFile(folder, file, contents) {
+  const filePath = resolve(folder, sanitizeFilename(file));
+  await mkdirp(folder);
+  return writeFile(filePath, JSON.stringify(contents));
 }

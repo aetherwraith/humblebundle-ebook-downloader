@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
+import process from 'node:process';
 import PMap from 'p-map';
 import PQueue from 'p-queue';
 import http2 from 'node:http2';
-import commander from 'commander';
+import { Command } from 'commander';
 import colors from 'colors';
 import {
   createReadStream,
@@ -17,20 +18,21 @@ import {
 } from 'node:fs';
 import { mkdirp } from 'mkdirp';
 import sanitizeFilename from 'sanitize-filename';
-import path from 'node:path';
+import * as path from 'node:path';
 import cliProgress from 'cli-progress';
-import { createHash } from 'node:crypto';
 import https from 'node:https';
-import readline from 'node:readline';
-import { readJsonFile } from 'utils/fileUtils.js';
-import { formatFileSize } from 'utils/formatFileSize.js';
-import { parseArrayOption, parseIntOption } from 'utils/parseOptions.js';
-import { SUPPORTED_FORMATS, userAgent } from 'utils/constants.js';
+import * as readline from 'node:readline/promises';
+import { readJsonFile, writeJsonFile } from './utils/fileUtils.js';
+import {
+  optionsFileName,
+  SUPPORTED_FORMATS,
+  userAgent,
+  version,
+} from './utils/constants.js';
+import { formatFileSize } from './utils/formatFileSize.js';
+import { parseArrayOption, parseIntOption } from './utils/parseOptions.js';
 
-const program = new commander.Command();
-const packageInfo = JSON.parse(
-  readFileSync('./package.json', { encoding: 'utf8' })
-);
+const program = new Command();
 
 let authToken, fileCheckQueue, downloadQueue, checksumCache;
 let totalDownloads = 0;
@@ -63,62 +65,26 @@ const bars = new Set();
 
 const bundlesBar = 'bundles';
 
-function loadOptions(options) {
-  const optionsFileName = 'options.json';
-  const optionsFilePath = path.resolve(
-    options.downloadFolder,
-    sanitizeFilename(optionsFileName)
-  );
-  if (!existsSync(optionsFilePath)) {
-    writeFileSync(optionsFilePath, JSON.stringify(options.dedup));
-    return options.dedup;
-  } else {
-    return JSON.parse(readFileSync(optionsFilePath, { encoding: 'utf8' }));
-  }
-}
-
-async function checkDedupStatus(options) {
+async function checkOptions(options) {
+  console.log(JSON.stringify(options));
+  const savedOptions = await readJsonFile(options.downloadFolder, optionsFileName);
+  console.log(JSON.stringify(savedOptions));
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
-  const prompt = query => new Promise(resolve => rl.question(query, resolve));
-
-  const dedup = loadDedupStatus(options);
-  if (options.dedup !== dedup) {
-    console.log(`Dedup option differs from saved: ${options.dedup} | ${dedup}`);
-    const useNewDedup = await prompt('Use new dedup setting (Y/N)?');
-    if (useNewDedup.toLowerCase() === 'y') {
-      writeDedupFile(options);
-    } else {
-      options.dedup = dedup;
+  for (const key of Object.keys(options)) {
+    if (savedOptions[key] !== options[key]) {
+      const useNewValue = await rl.question(
+        `${key} differs from saved.\n\toriginal: ${savedOptions[key]}\n\tnew: ${options[key]}\nUse new value (Y/n)?`
+      );
+      if (useNewValue.toLowerCase() !== 'y') {
+        options[key] = savedOptions[key];
+      }
     }
   }
   rl.close();
-}
-
-async function checkbundleFoldersStatus(options) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  const prompt = query => new Promise(resolve => rl.question(query, resolve));
-
-  const bundleFoldersStatus = loadbundleFoldersStatus(options);
-  if (options.bundleFolders !== bundleFoldersStatus) {
-    console.log(
-      `Bundle folder option differs from saved: ${options.bundleFolders} | ${bundleFoldersStatus}`
-    );
-    const useNewbundleFolders = await prompt(
-      'Use new bundle folder setting (Y/N)?'
-    );
-    if (useNewbundleFolders.toLowerCase() === 'y') {
-      writebundleFoldersFile(options);
-    } else {
-      options.bundleFolders = bundleFoldersStatus;
-    }
-  }
-  rl.close();
+  await writeJsonFile(options.downloadFolder, optionsFileName, options);
 }
 
 function getRequestHeaders() {
@@ -275,9 +241,11 @@ async function getOrderInfo(gameKey) {
 }
 
 async function fileHash(download) {
+  const { createHash } = await import('node:crypto');
   return new Promise((resolve, reject) => {
     // Algorithm depends on availability of OpenSSL on platform
     // Another algorithms: 'sha1', 'md5', 'sha256', 'sha512' ...
+
     let shasum = createHash('sha1');
     let md5sum = createHash('md5');
     let size = statSync(download.filePath).size;
@@ -746,39 +714,38 @@ async function clean(options, downloads) {
 
 async function all() {
   const options = program.opts();
-  await checkDedupStatus(options);
-  await checkbundleFoldersStatus(options);
+  await checkOptions(options);
   authToken = options.authToken;
-  checksumCache = readJsonFile(options.downloadFolder);
-  const orderList = await getOrderList();
-  const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
-  const downloads = await filterOrders(
-    orderInfo,
-    options.downloadFolder,
-    options.dedup,
-    options.bundleFolders
-  );
-  console.log(
-    `original: ${preFilteredDownloads} filtered: ${downloads.length}`
-  );
-  totalDownloads = downloads.length;
-  bars.downloads = progress.create(downloads.length, 0, {
-    file: 'Downloads',
-  });
-  createDownloadQueue(options.downloadLimit);
-  createFileCheckQueue(options.downloadLimit);
-  await Promise.all(downloads.map(download => downloadItem(download)));
-
-  await fileCheckQueue.onIdle();
-  await downloadQueue.onIdle();
-
-  progress.stop();
-  await clean(options, downloads);
-  console.log(
-    `${colors.green(
-      'Done!'
-    )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
-  );
+  // checksumCache = readJsonFile(options.downloadFolder);
+  // const orderList = await getOrderList();
+  // const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
+  // const downloads = await filterOrders(
+  //   orderInfo,
+  //   options.downloadFolder,
+  //   options.dedup,
+  //   options.bundleFolders
+  // );
+  // console.log(
+  //   `original: ${preFilteredDownloads} filtered: ${downloads.length}`
+  // );
+  // totalDownloads = downloads.length;
+  // bars.downloads = progress.create(downloads.length, 0, {
+  //   file: 'Downloads',
+  // });
+  // createDownloadQueue(options.downloadLimit);
+  // createFileCheckQueue(options.downloadLimit);
+  // await Promise.all(downloads.map(download => downloadItem(download)));
+  //
+  // await fileCheckQueue.onIdle();
+  // await downloadQueue.onIdle();
+  //
+  // progress.stop();
+  // await clean(options, downloads);
+  // console.log(
+  //   `${colors.green(
+  //     'Done!'
+  //   )} Downloaded: ${countDownloads}, checked: ${countFileChecks}`
+  // );
 }
 
 async function trove() {
@@ -969,7 +936,7 @@ async function checksums() {
 
 (async function () {
   program
-    .version(packageInfo.version)
+    .version(version)
     .requiredOption(
       '-d, --download-folder <downloader_folder>',
       'Download folder',
