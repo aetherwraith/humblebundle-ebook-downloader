@@ -21,16 +21,19 @@ import sanitizeFilename from 'sanitize-filename';
 import * as path from 'node:path';
 import cliProgress from 'cli-progress';
 import https from 'node:https';
-import * as readline from 'node:readline/promises';
-import { readJsonFile, writeJsonFile } from './utils/fileUtils.js';
+import { loadChecksumCache, readJsonFile } from './utils/fileUtils.js';
 import {
-  optionsFileName,
+  bundlesBar,
   SUPPORTED_FORMATS,
   userAgent,
   version,
 } from './utils/constants.js';
 import { formatFileSize } from './utils/formatFileSize.js';
-import { parseArrayOption, parseIntOption } from './utils/parseOptions.js';
+import {
+  checkOptions,
+  parseArrayOption,
+  parseIntOption,
+} from './utils/optionsUtils.js';
 
 const program = new Command();
 
@@ -44,7 +47,7 @@ let preFilteredDownloads = 0;
 const progress = new cliProgress.MultiBar(
   {
     format:
-      ' {bar} | {percentage}% | {duration_formatted}/{eta_formatted} | {value}/{total} | "{file}" ',
+      ' {bar} | {peesentage}% | {duration_formatted}/{eta_formatted} | {value}/{total} | "{file}" ',
     hideCursor: true,
     etaBuffer: 25000,
     etaAsynchronousUpdate: true,
@@ -57,42 +60,16 @@ function exitHandler() {
   progress.stop();
 }
 
-process.on('SIGINT', exitHandler);
-
 process.on('exit', exitHandler);
 
 const bars = new Set();
 
-const bundlesBar = 'bundles';
-
-async function checkOptions(options) {
-  console.log(JSON.stringify(options));
-  const savedOptions = await readJsonFile(options.downloadFolder, optionsFileName);
-  console.log(JSON.stringify(savedOptions));
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  for (const key of Object.keys(options)) {
-    if (savedOptions[key] !== options[key]) {
-      const useNewValue = await rl.question(
-        `${key} differs from saved.\n\toriginal: ${savedOptions[key]}\n\tnew: ${options[key]}\nUse new value (Y/n)?`
-      );
-      if (useNewValue.toLowerCase() !== 'y') {
-        options[key] = savedOptions[key];
-      }
-    }
-  }
-  rl.close();
-  await writeJsonFile(options.downloadFolder, optionsFileName, options);
-}
-
-function getRequestHeaders() {
+function getRequestHeaders(options) {
   return {
     Accept: 'application/json',
     'Accept-Charset': 'utf-8',
     'User-Agent': userAgent,
-    Cookie: `_simpleauth_sess="${authToken.replace(/^"|"$/g, '')}";`,
+    Cookie: `_simpleauth_sess="${options.authToken.replace(/^"|"$/g, '')}";`,
   };
 }
 
@@ -715,8 +692,8 @@ async function clean(options, downloads) {
 async function all() {
   const options = program.opts();
   await checkOptions(options);
-  authToken = options.authToken;
-  // checksumCache = readJsonFile(options.downloadFolder);
+  const checksums = await loadChecksumCache(options);
+
   // const orderList = await getOrderList();
   // const orderInfo = await getAllOrderInfo(orderList, options.concurrency);
   // const downloads = await filterOrders(
