@@ -35,9 +35,9 @@ export const argDescriptions = {
   authToken:
     "You must specify your authentication cookie from your browser (_simpleauth_sess)",
   format:
-    'Format(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "cbz,pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
+    'Format(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "-f cbz -f pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
   platform:
-    'Platform(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "linux,win" will download linux format or win if linux does not exist, unless --no-dedup is specified.',
+    'Platform(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "-p linux -p win" will download linux format or win if linux does not exist, unless --no-dedup is specified.',
 };
 export const argRequired = ["downloadFolder", "authToken"];
 export const argNoSave = ["downloadFolder", "authToken"];

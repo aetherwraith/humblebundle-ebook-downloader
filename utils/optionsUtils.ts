@@ -3,6 +3,8 @@ import {
   argNoSave,
   argRequired,
   optionsFileName,
+  SUPPORTED_FORMATS,
+  SUPPORTED_PLATFORMS,
 } from "./constants.ts";
 import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
 import * as log from "@std/log";
@@ -11,9 +13,9 @@ import { isEql, isEqlArr } from "@opentf/std";
 
 export async function checkOptions(options) {
   if (!options.downloadFolder) {
-    missingOption("Please specify download folder (--download-folder or -d)");
+    optionError("Please specify download folder (--download-folder or -d)");
   } else if (!options.authToken) {
-    missingOption("Please specify auth token  (--auth-token or -t)");
+    optionError("Please specify auth token  (--auth-token or -t)");
   }
 
   const savedOptions = await readJsonFile(
@@ -22,6 +24,16 @@ export async function checkOptions(options) {
   );
   const saveMe = {};
   for (const key of Object.keys(argDescriptions)) {
+    switch (key) {
+      case "format":
+        checkArrayOption(options[key], SUPPORTED_FORMATS);
+        break;
+      case "platform":
+        checkArrayOption(options[key], SUPPORTED_PLATFORMS);
+        break;
+      case "authToken":
+        break;
+    }
     if (!argNoSave.includes(key)) {
       saveMe[key] = options[key];
       if (savedOptions[key] && !isEql(savedOptions[key], options[key])) {
@@ -55,8 +67,18 @@ function usage() {
   }
 }
 
-function missingOption(message: string) {
+function optionError(message: string) {
   log.error(message);
   usage();
   Deno.exit(1);
+}
+
+function checkArrayOption(values: string[], validValues: string[]) {
+  if (!values.every((value) => validValues.includes(value))) {
+    optionError(
+      `${values} contains one or more invalid formats. Supported formats are ${validValues.join(
+        ",",
+      )}`,
+    );
+  }
 }
