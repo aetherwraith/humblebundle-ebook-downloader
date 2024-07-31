@@ -1,8 +1,8 @@
-import prettyBytes from 'pretty-bytes';
+import prettyBytes from "pretty-bytes";
 
 export function formatFileSize(v, options, type) {
   switch (type) {
-    case 'percentage':
+    case "percentage":
       return v.padStart(3, options.autopaddingChar);
 
     default:

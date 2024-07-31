@@ -4,7 +4,8 @@ An easy way to download ebooks from your humblebundle account
 
 ## Installation
 
-To run the tool, you can either install NodeJS and use npm to install it, or install Docker and run it as a docker container.
+To run the tool, you can either install NodeJS and use npm to install it, or
+install Docker and run it as a docker container.
 
 ### NPM
 
@@ -24,10 +25,14 @@ To run the tool via Docker, run:
 docker run -v $(PWD)/download:/download --rm -it dmarby/humblebundle-ebook-downloader -d /download --auth-token "auth_string_here"
 ```
 
-This will download the books to the `download` folder in your current work directory.
+This will download the books to the `download` folder in your current work
+directory.
 
-Note that you need to get your auth token from the authentication cookie in your browser after logging in to the humblebundle website (\_simpleauth_sess) when using Docker, as the option to interactively log in isn't available.
-When using the tool installed via npm, it will launch a browser and let you log in interactively instead.
+Note that you need to get your auth token from the authentication cookie in your
+browser after logging in to the humblebundle website (\_simpleauth_sess) when
+using Docker, as the option to interactively log in isn't available. When using
+the tool installed via npm, it will launch a browser and let you log in
+interactively instead.
 
 ## Usage
 
