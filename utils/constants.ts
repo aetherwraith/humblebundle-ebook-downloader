@@ -10,6 +10,16 @@ export const bundlesBar = "bundles";
 export const version = packageInfo.version;
 export const userAgent = `HumbleBundle-Ebook-Downloader/${version}`;
 
+export const COMMANDS = {
+  all: "all",
+  checksums: "checksums",
+  cleanup: "cleanup",
+  cleanupebooks: "cleanupebooks",
+  cleanuptrove: "cleanuptrove",
+  ebooks: "ebooks",
+  trove: "trove",
+};
+
 const argBooleans = ["dedup", "bundleFolders"];
 const argDefaults = {
   dedup: true,
@@ -32,14 +42,13 @@ export const argDescriptions = {
   bundleFolders: "Arrange downloads in bundle folders",
   downloadFolder: "Download folder",
   downloadLimit: "Parallel download limit",
-  authToken:
-    "You must specify your authentication cookie from your browser (_simpleauth_sess)",
+  authToken: "Authentication cookie from your browser (_simpleauth_sess)",
   format:
-    'Format(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "-f cbz -f pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
+    'Format(s) to download. Can be specified multiple times. Will prioritise in the order given, i.e. if you say "-f cbz -f pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
   platform:
-    'Platform(s) to download separated by ",". Will prioritise in the order given, i.e. if you say "-p linux -p win" will download linux format or win if linux does not exist, unless --no-dedup is specified.',
+    'Platform(s) to download. Can be specified multiple times. Will prioritise in the order given, i.e. if you say "-p linux -p win" will download linux format or win if linux does not exist, unless --no-dedup is specified.',
 };
-export const argRequired = ["downloadFolder", "authToken"];
+export const argRequired = ["downloadFolder"];
 export const argNoSave = ["downloadFolder", "authToken"];
 
 export const parseOptions: ParseOptions = {

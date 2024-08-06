@@ -2,6 +2,7 @@ import {
   argDescriptions,
   argNoSave,
   argRequired,
+  COMMANDS,
   optionsFileName,
   SUPPORTED_FORMATS,
   SUPPORTED_PLATFORMS,
@@ -9,12 +10,18 @@ import {
 import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
 import * as log from "@std/log";
 import { green, red } from "@std/fmt/colors";
-import { isEql, isEqlArr } from "@opentf/std";
+import { isEql } from "@opentf/std";
+import { includesValue } from "@std/collections/includes-value";
 
 export async function checkOptions(options) {
-  if (!options.downloadFolder) {
+  if (
+    options._.length !== 1 ||
+    !includesValue(COMMANDS, options._[0].toLowerCase())
+  ) {
+    optionError("No or invalid command!");
+  } else if (!options.downloadFolder) {
     optionError("Please specify download folder (--download-folder or -d)");
-  } else if (!options.authToken) {
+  } else if (options._[0] !== COMMANDS.checksums && !options.authToken) {
     optionError("Please specify auth token  (--auth-token or -t)");
   }
 
@@ -52,12 +59,14 @@ export async function checkOptions(options) {
   }
 
   await writeJsonFile(options.downloadFolder, optionsFileName, saveMe);
+  options.command = options._[0];
 }
 
 function usage() {
   log.info(
     "To download your humble bundle artifacts please use the following parameters",
   );
+  log.info(`Specify a command as one of ${Object.values(COMMANDS).join(",")}`);
   for (const [key, value] of Object.entries(argDescriptions)) {
     if (argRequired.includes(key)) {
       log.info(`${red("(Required)")} ${red(key)} : ${value}`);

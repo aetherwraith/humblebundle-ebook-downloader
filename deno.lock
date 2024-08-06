@@ -4,6 +4,7 @@
     "specifiers": {
       "jsr:@opentf/std@^0.12.0": "jsr:@opentf/std@0.12.0",
       "jsr:@std/cli@^1.0.1": "jsr:@std/cli@1.0.1",
+      "jsr:@std/collections@^1.0.5": "jsr:@std/collections@1.0.5",
       "jsr:@std/fmt@^0.225.6": "jsr:@std/fmt@0.225.6",
       "jsr:@std/fmt@^1.0.0-rc.1": "jsr:@std/fmt@1.0.0-rc.1",
       "jsr:@std/fs@^1.0.0-rc.5": "jsr:@std/fs@1.0.0",
@@ -17,6 +18,9 @@
       },
       "@std/cli@1.0.1": {
         "integrity": "d0661fba13b30e3c0121646589fa9beeeabe92482c6b04679ea0e7ec683d97f2"
+      },
+      "@std/collections@1.0.5": {
+        "integrity": "ab9eac23b57a0c0b89ba45134e61561f69f3d001f37235a248ed40be260c0c10"
       },
       "@std/fmt@0.225.6": {
         "integrity": "aba6aea27f66813cecfd9484e074a9e9845782ab0685c030e453a8a70b37afc8"
@@ -86,6 +90,7 @@
       "jsr:@opentf/std@^0.12.0",
       "jsr:@std/assert@1",
       "jsr:@std/cli@^1.0.1",
+      "jsr:@std/collections@^1.0.5",
       "jsr:@std/fmt@^0.225.6",
       "jsr:@std/log@^0.224.5",
       "jsr:@std/path@^1.0.2"
