@@ -1,7 +1,7 @@
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
 import process from "node:process";
-import { cacheFileName } from "./constants.ts";
+import { cacheFileName, Options } from "./constants.ts";
 import * as log from "@std/log";
 import { green } from "@std/fmt/colors";
 
@@ -18,14 +18,24 @@ export async function readJsonFile(folder: string, file: string) {
 export async function writeJsonFile(
   folder: string,
   file: string,
-  contents: any,
+  contents: object,
 ) {
   const filePath = resolve(folder, sanitizeFilename(file));
   await Deno.mkdir(folder, { recursive: true });
   return Deno.writeTextFile(filePath, JSON.stringify(contents));
 }
 
-export async function loadChecksumCache(options: { downloadFolder: string }) {
+export function writeJsonFileSync(
+  folder: string,
+  file: string,
+  contents: object,
+) {
+  const filePath = resolve(folder, sanitizeFilename(file));
+  Deno.mkdirSync(folder, { recursive: true });
+  Deno.writeTextFileSync(filePath, JSON.stringify(contents));
+}
+
+export async function loadChecksumCache(options: Options) {
   // load cache file of checksums
 
   const checksumCache = await readJsonFile(
@@ -33,15 +43,13 @@ export async function loadChecksumCache(options: { downloadFolder: string }) {
     cacheFileName,
   );
 
-  process.on("SIGINT", async () => {
-    await writeJsonFile(options.downloadFolder, cacheFileName, checksumCache);
+  process.on("SIGINT", () => {
+    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   });
 
-  process.on(
-    "exit",
-    async () =>
-      await writeJsonFile(options.downloadFolder, cacheFileName, checksumCache),
-  );
+  process.on("exit", () => {
+    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
+  });
 
   log.info(
     `${green(Object.keys(checksumCache).length.toString())} checksums loaded`,
