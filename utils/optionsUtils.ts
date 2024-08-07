@@ -12,6 +12,8 @@ import * as log from "@std/log";
 import { green, red } from "@std/fmt/colors";
 import { isEql } from "@opentf/std";
 import { includesValue } from "@std/collections/includes-value";
+import { exists } from "@std/fs/exists";
+import { resolve } from "@std/path";
 
 export async function checkOptions(options) {
   if (
@@ -23,6 +25,10 @@ export async function checkOptions(options) {
     optionError("Please specify download folder (--download-folder or -d)");
   } else if (options._[0] !== COMMANDS.checksums && !options.authToken) {
     optionError("Please specify auth token  (--auth-token or -t)");
+  }
+
+  if (options.authToken && (await exists(resolve(options.authToken)))) {
+    options.authToken = await Deno.readTextFile(resolve(options.authToken));
   }
 
   const savedOptions = await readJsonFile(
@@ -45,9 +51,9 @@ export async function checkOptions(options) {
       saveMe[key] = options[key];
       if (savedOptions[key] && !isEql(savedOptions[key], options[key])) {
         const useNewValue = prompt(
-          `${key} differs from saved.\n\toriginal: ${savedOptions[key]}\n\tnew: ${
-            options[key]
-          }\nUse new value (Y/n)?`,
+          `${key} differs from saved.\n\toriginal: ${
+            savedOptions[key]
+          }\n\tnew: ${options[key]}\nUse new value (Y/n)?`,
           "Y",
         );
         if (!useNewValue?.toLowerCase()?.includes("y")) {
@@ -85,9 +91,11 @@ function optionError(message: string) {
 function checkArrayOption(values: string[], validValues: string[]) {
   if (!values.every((value) => validValues.includes(value))) {
     optionError(
-      `${values} contains one or more invalid formats. Supported formats are ${validValues.join(
-        ",",
-      )}`,
+      `${values} contains one or more invalid formats. Supported formats are ${
+        validValues.join(
+          ",",
+        )
+      }`,
     );
   }
 }

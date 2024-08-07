@@ -1,11 +1,21 @@
 import packageInfo from "../deno.json" with { type: "json" };
 import { ParseOptions } from "@std/cli/parse-args";
 
+export interface Options {
+  dedup: boolean;
+  bundleFolders: boolean;
+  parallel: number;
+  format: string;
+  platform: string;
+  command: string;
+  authToken: string;
+  downloadFolder: string;
+}
+
 export const SUPPORTED_FORMATS = ["cbz", "epub", "pdf_hd", "pdf", "mobi"];
 export const SUPPORTED_PLATFORMS = ["linux", "mac", "windows"];
 export const optionsFileName = "options.json";
 export const cacheFileName = "checksums.json";
-export const bundlesBar = "bundles";
 
 export const version = packageInfo.version;
 export const userAgent = `HumbleBundle-Ebook-Downloader/${version}`;
@@ -24,14 +34,14 @@ const argBooleans = ["dedup", "bundleFolders"];
 const argDefaults = {
   dedup: true,
   bundleFolders: true,
-  downloadLimit: 1,
+  parallel: 1,
   format: SUPPORTED_FORMATS,
   platform: SUPPORTED_PLATFORMS,
 };
 const argStrings = ["downloadFolder", "authToken"];
 const argAlias = {
   downloadFolder: "d",
-  downloadLimit: "l",
+  parallel: "l",
   authToken: "t",
   format: "f",
   platform: "p",
@@ -41,7 +51,7 @@ export const argDescriptions = {
   dedup: "Dedup the downloads",
   bundleFolders: "Arrange downloads in bundle folders",
   downloadFolder: "Download folder",
-  downloadLimit: "Parallel download limit",
+  parallel: "Parallel limit",
   authToken: "Authentication cookie from your browser (_simpleauth_sess)",
   format:
     'Format(s) to download. Can be specified multiple times. Will prioritise in the order given, i.e. if you say "-f cbz -f pdf" will download cbz format or pdf if cbz does not exist, unless --no-dedup is specified.',
