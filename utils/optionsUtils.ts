@@ -3,6 +3,7 @@ import {
   argNoSave,
   argRequired,
   COMMANDS,
+  Options,
   optionsFileName,
   SUPPORTED_FORMATS,
   SUPPORTED_PLATFORMS,
@@ -15,9 +16,9 @@ import { includesValue } from "@std/collections/includes-value";
 import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
 
-export async function checkOptions(options) {
+export async function checkOptions(options: Options) {
   if (
-    options._.length !== 1 ||
+    options._?.length !== 1 ||
     !includesValue(COMMANDS, options._[0].toLowerCase())
   ) {
     optionError("No or invalid command!");
@@ -25,17 +26,27 @@ export async function checkOptions(options) {
     optionError("Please specify download folder (--download-folder or -d)");
   } else if (options._[0] !== COMMANDS.checksums && !options.authToken) {
     optionError("Please specify auth token  (--auth-token or -t)");
+  } else {
+    options.command = options._[0];
   }
 
   if (options.authToken && (await exists(resolve(options.authToken)))) {
     options.authToken = await Deno.readTextFile(resolve(options.authToken));
   }
 
-  const savedOptions = await readJsonFile(
+  const savedOptions: Options = await readJsonFile(
     options.downloadFolder,
     optionsFileName,
   );
-  const saveMe = {};
+  const saveMe: Options = {
+    dedup: false,
+    bundleFolders: false,
+    parallel: 0,
+    format: [],
+    platform: [],
+    authToken: "",
+    downloadFolder: "",
+  };
   for (const key of Object.keys(argDescriptions)) {
     switch (key) {
       case "format":
@@ -65,7 +76,6 @@ export async function checkOptions(options) {
   }
 
   await writeJsonFile(options.downloadFolder, optionsFileName, saveMe);
-  options.command = options._[0];
 }
 
 function usage() {

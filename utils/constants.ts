@@ -1,13 +1,14 @@
 import packageInfo from "../deno.json" with { type: "json" };
 import { ParseOptions } from "@std/cli/parse-args";
 
-export interface Options {
+export interface Options extends Record<string, unknown> {
+  _?: string[];
   dedup: boolean;
   bundleFolders: boolean;
   parallel: number;
-  format: string;
-  platform: string;
-  command: string;
+  format: string[];
+  platform: string[];
+  command?: string;
   authToken: string;
   downloadFolder: string;
 }
@@ -24,8 +25,8 @@ export const COMMANDS = {
   all: "all",
   checksums: "checksums",
   cleanup: "cleanup",
-  cleanupebooks: "cleanupebooks",
-  cleanuptrove: "cleanuptrove",
+  cleanupEbooks: "cleanupEbooks",
+  cleanupTrove: "cleanupTrove",
   ebooks: "ebooks",
   trove: "trove",
 };
