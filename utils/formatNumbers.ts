@@ -7,3 +7,13 @@ export function formatPercentage(v: string) {
 export function formatBytes(v: number) {
   return format(v);
 }
+
+export function formatFileSize(v: string, options: any, variant: string) {
+  switch (variant) {
+    case "percentage":
+      return formatPercentage(v);
+
+    default:
+      return formatBytes(parseInt(v, 10) || 0);
+  }
+}
