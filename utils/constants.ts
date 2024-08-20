@@ -70,3 +70,9 @@ export const parseOptions: ParseOptions = {
   alias: argAlias,
   collect: argCollect,
 };
+
+export const INVALID_COMMAND_ERROR = "No or invalid command!";
+export const MISSING_DOWNLOAD_FOLDER_ERROR =
+  "Please specify download folder (--download-folder or -d)";
+export const MISSING_AUTH_TOKEN_ERROR =
+  "Please specify auth token (--auth-token or -t)";

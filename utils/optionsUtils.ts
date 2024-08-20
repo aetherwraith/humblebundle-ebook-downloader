@@ -3,6 +3,9 @@ import {
   argNoSave,
   argRequired,
   COMMANDS,
+  INVALID_COMMAND_ERROR,
+  MISSING_AUTH_TOKEN_ERROR,
+  MISSING_DOWNLOAD_FOLDER_ERROR,
   Options,
   optionsFileName,
   SUPPORTED_FORMATS,
@@ -17,28 +20,36 @@ import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
 
 export async function checkOptions(options: Options) {
+  validateInitialOptions(options);
+  if (options.authToken && (await exists(resolve(options.authToken)))) {
+    options.authToken = await Deno.readTextFile(resolve(options.authToken));
+  }
+  const savedOptions = await readJsonFile(
+    options.downloadFolder,
+    optionsFileName,
+  );
+  const optionsToSave: Options = initializeOptionsToSave();
+  processOptions(options, savedOptions, optionsToSave);
+  await writeJsonFile(options.downloadFolder, optionsFileName, optionsToSave);
+}
+
+function validateInitialOptions(options: Options): void {
   if (
     options._?.length !== 1 ||
     !includesValue(COMMANDS, options._[0].toLowerCase())
   ) {
-    optionError("No or invalid command!");
+    optionError(INVALID_COMMAND_ERROR);
   } else if (!options.downloadFolder) {
-    optionError("Please specify download folder (--download-folder or -d)");
+    optionError(MISSING_DOWNLOAD_FOLDER_ERROR);
   } else if (options._[0] !== COMMANDS.checksums && !options.authToken) {
-    optionError("Please specify auth token  (--auth-token or -t)");
+    optionError(MISSING_AUTH_TOKEN_ERROR);
   } else {
     options.command = options._[0];
   }
+}
 
-  if (options.authToken && (await exists(resolve(options.authToken)))) {
-    options.authToken = await Deno.readTextFile(resolve(options.authToken));
-  }
-
-  const savedOptions: Options = await readJsonFile(
-    options.downloadFolder,
-    optionsFileName,
-  );
-  const saveMe: Options = {
+function initializeOptionsToSave(): Options {
+  return {
     dedup: false,
     bundleFolders: false,
     parallel: 0,
@@ -47,6 +58,13 @@ export async function checkOptions(options: Options) {
     authToken: "",
     downloadFolder: "",
   };
+}
+
+function processOptions(
+  options: Options,
+  savedOptions: Options,
+  optionsToSave: Options,
+): void {
   for (const key of Object.keys(argDescriptions)) {
     switch (key) {
       case "format":
@@ -55,30 +73,61 @@ export async function checkOptions(options: Options) {
       case "platform":
         checkArrayOption(options[key], SUPPORTED_PLATFORMS);
         break;
-      case "authToken":
-        break;
     }
     if (!argNoSave.includes(key)) {
-      saveMe[key] = options[key];
-      if (savedOptions[key] && !isEql(savedOptions[key], options[key])) {
-        const useNewValue = prompt(
-          `${key} differs from saved.\n\toriginal: ${
-            savedOptions[key]
-          }\n\tnew: ${options[key]}\nUse new value (Y/n)?`,
-          "Y",
-        );
-        if (!useNewValue?.toLowerCase()?.includes("y")) {
-          options[key] = savedOptions[key];
-          saveMe[key] = savedOptions[key];
-        }
-      }
+      handleOptionDifferences(key, options, savedOptions, optionsToSave);
     }
   }
-
-  await writeJsonFile(options.downloadFolder, optionsFileName, saveMe);
 }
 
-function usage() {
+function handleOptionDifferences(
+  key: string,
+  options: Options,
+  savedOptions: Options,
+  optionsToSave: Options,
+): void {
+  optionsToSave[key] = options[key];
+  if (savedOptions[key] && !isEql(savedOptions[key], options[key])) {
+    const useNewValue = promptOptionChange(
+      key,
+      savedOptions[key],
+      options[key],
+    );
+    if (!useNewValue?.toLowerCase()?.includes("y")) {
+      options[key] = savedOptions[key];
+      optionsToSave[key] = savedOptions[key];
+    }
+  }
+}
+
+function promptOptionChange(
+  key: string,
+  original: unknown,
+  newValue: unknown,
+): string | null {
+  return prompt(
+    `${key} differs from saved.\n\toriginal: ${original}\n\tnew: ${newValue}\nUse new value (Y/n)?`,
+    "Y",
+  );
+}
+
+function optionError(message: string): void {
+  log.error(message);
+  usage();
+  Deno.exit(1);
+}
+
+function checkArrayOption(values: string[], validValues: string[]): void {
+  if (!values.every((value) => validValues.includes(value))) {
+    optionError(
+      `${values} contains one or more invalid formats. Supported formats are ${
+        validValues.join(",")
+      }`,
+    );
+  }
+}
+
+function usage(): void {
   log.info(
     "To download your humble bundle artifacts please use the following parameters",
   );
@@ -89,23 +138,5 @@ function usage() {
     } else {
       log.info(`${green("(Optional)")} ${green(key)} : ${value}`);
     }
-  }
-}
-
-function optionError(message: string) {
-  log.error(message);
-  usage();
-  Deno.exit(1);
-}
-
-function checkArrayOption(values: string[], validValues: string[]) {
-  if (!values.every((value) => validValues.includes(value))) {
-    optionError(
-      `${values} contains one or more invalid formats. Supported formats are ${
-        validValues.join(
-          ",",
-        )
-      }`,
-    );
   }
 }

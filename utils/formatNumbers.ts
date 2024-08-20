@@ -8,7 +8,7 @@ export function formatBytes(v: number) {
   return format(v);
 }
 
-export function formatFileSize(v: string, options: any, variant: string) {
+export function formatFileSize(v: string, _options: unknown, variant: string) {
   switch (variant) {
     case "percentage":
       return formatPercentage(v);
