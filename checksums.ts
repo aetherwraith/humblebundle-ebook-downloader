@@ -7,14 +7,14 @@ import { yellow } from "@std/fmt/colors";
 
 export async function checksum(
   file: WalkEntry,
-  checksumProgress: any,
+  progress: unknown,
   checksumBars: Set<unknown>,
 ) {
   const size = (await Deno.stat(resolve(file.path))).size;
 
   using hashMe = await Deno.open(resolve(file.path), { read: true });
   const bob = hashMe.readable.pipeThrough(
-    new ChecksumProgress(size, file, checksumProgress, checksumBars),
+    new ChecksumProgress(size, file, progress, checksumBars),
   );
 
   const [shaStream, md5Stream] = bob.tee();
@@ -30,9 +30,9 @@ export async function checksum(
   return { sha1, md5 };
 }
 
-const progress = {
+const checkSumProgress = {
   start() {
-    this.checksumBars[this.file.name] = this.checksumProgress.create(
+    this.checksumBars[this.file.name] = this.progress.create(
       this.size,
       this.completed,
       {
@@ -41,13 +41,13 @@ const progress = {
       { formatValue: formatFileSize },
     );
   },
-  async transform(chunk, controller) {
+  transform(chunk, controller) {
     this.completed += chunk.byteLength;
     this.checksumBars[this.file.name].increment(chunk.byteLength);
     controller.enqueue(chunk);
   },
   flush() {
-    this.checksumProgress.remove(this.checksumBars[this.file.name]);
+    this.progress.remove(this.checksumBars[this.file.name]);
     this.checksumBars.delete(this.file.name);
   },
 };
@@ -56,14 +56,14 @@ class ChecksumProgress extends TransformStream {
   constructor(
     size: number,
     file: WalkEntry,
-    checksumProgress,
-    checksumBars,
+    progress: unknown,
+    checksumBars: Set<unknown>,
   ) {
     super({
-      ...progress,
+      ...checkSumProgress,
       size,
       file,
-      checksumProgress,
+      progress,
       checksumBars,
       completed: 0,
     });

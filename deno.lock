@@ -133,6 +133,8 @@
       "jsr:@std/fs@^1.0.1",
       "jsr:@std/log@^0.224.5",
       "jsr:@std/path@^1.0.2",
+      "npm:@types/cli-progress@^3.11.6",
+      "npm:@types/node@^22.4.1",
       "npm:cli-progress@^3.12.0"
     ]
   }

@@ -12,7 +12,7 @@ import { newQueue } from "@henrygd/queue";
 import { checksum } from "./checksums.ts";
 import cliProgress from "cli-progress";
 import process from "node:process";
-import { blue, green } from "@std/fmt/colors";
+import { green, yellow } from "@std/fmt/colors";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -78,8 +78,8 @@ switch (options.command) {
   }
 }
 
-// Wait for queue to complete
+// Wait for queues to complete
 await fileCheckQueue.done();
 progress.stop();
 
-log.info(`${green("Updated:")} ${blue(totalChecksums.toString())}`);
+log.info(`${green("Updated:")} ${yellow(totalChecksums.toString())}`);
