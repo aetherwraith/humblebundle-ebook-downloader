@@ -9,20 +9,28 @@ import { checkOptions } from "./utils/optionsUtils.ts";
 import { walk, WalkEntry } from "@std/fs/walk";
 import { loadChecksumCache, writeJsonFile } from "./utils/fileUtils.ts";
 import { newQueue } from "@henrygd/queue";
-import { checksum } from "./checksums.ts";
+import { checksum } from "./utils/checksums.ts";
 import cliProgress from "cli-progress";
 import process from "node:process";
 import { green, yellow } from "@std/fmt/colors";
 import { getRequestHeaders } from "./utils/web.ts";
+import { Bundle, GameKey } from "./utils/types.ts";
+import { sample } from "@std/collections/sample";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
 await checkOptions(options);
 
 // Initialize the queues
-const fileCheckQueue = newQueue(options.parallel);
-const orderInfoQueue = newQueue(options.parallel);
-let totalChecksums = 0;
+const queues = {
+  fileCheckQueue: newQueue(options.parallel),
+  orderInfoQueue: newQueue(options.parallel),
+};
+const totals = {
+  bundles: 0,
+  checksums: 0,
+  checksumsLoaded: 0,
+};
 
 // Setup progress bar
 const progress = new cliProgress.MultiBar(
@@ -40,10 +48,13 @@ const progress = new cliProgress.MultiBar(
 
 // Load checksum cache
 const checksums = await loadChecksumCache(options);
+totals.checksumsLoaded = checksums.length;
 
 // Handle process signals
 process.on("SIGINT", () => {
-  fileCheckQueue.clear();
+  for (const queue of Object.values(queues)) {
+    queue.clear();
+  }
 });
 
 // Main switch case for command execution
@@ -60,9 +71,9 @@ switch (options.command) {
         Deno.exit(1);
       }
       checksumProgress.setTotal(checksumProgress.total + 1);
-      fileCheckQueue.add(async () => {
+      queues.fileCheckQueue.add(async () => {
         checksums[file.name] = await checksum(file, progress, checksumBars);
-        totalChecksums++;
+        totals.checksums++;
         checksumProgress.increment();
       });
     };
@@ -74,7 +85,6 @@ switch (options.command) {
         skip: [/json/],
       })
     ) {
-      log.info(file);
       processFile(file);
     }
     break;
@@ -85,12 +95,12 @@ switch (options.command) {
     const orderResponse = await fetch(base + orderPath, {
       headers: getRequestHeaders(options),
     });
-    const gameKeys = await orderResponse.json();
-    log.info(`Fetching order information for ${gameKeys.length} bundles`);
+    const gameKeys: GameKey[] = await orderResponse.json();
+    totals.bundles = gameKeys.length;
     const bundlesBar = progress.create(gameKeys.length, 0, { file: "Bundles" });
-    const bundles = [];
+    const bundles: Bundle[] = [];
     for (const gameKey of gameKeys) {
-      orderInfoQueue.add(async () => {
+      queues.orderInfoQueue.add(async () => {
         bundles.push(
           await fetch(base + `/api/v1/order/${gameKey.gamekey}?ajax=true`, {
             headers: getRequestHeaders(options),
@@ -99,13 +109,9 @@ switch (options.command) {
         bundlesBar.increment();
       });
     }
-    await orderInfoQueue.done();
+    await queues.orderInfoQueue.done();
+    bundlesBar.stop();
     progress.remove(bundlesBar);
-    log.info(
-      bundles.toSorted((a, b) =>
-        a.product.human_name.localeCompare(b.product.human_name)
-      ),
-    );
     await writeJsonFile(
       ".",
       "bundles.json",
@@ -118,7 +124,7 @@ switch (options.command) {
 }
 
 // Wait for queues to complete
-await fileCheckQueue.done();
+await Promise.all(Object.values(queues).map((queue) => queue.done()));
 progress.stop();
 
-log.info(`${green("Updated checksums:")} ${yellow(totalChecksums.toString())}`);
+log.info(totals);
