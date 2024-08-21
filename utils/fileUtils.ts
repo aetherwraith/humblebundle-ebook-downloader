@@ -4,6 +4,7 @@ import process from "node:process";
 import { cacheFileName, Options } from "./constants.ts";
 import * as log from "@std/log";
 import { green } from "@std/fmt/colors";
+import { Checksums } from "./types.ts";
 
 export async function readJsonFile(folder: string, file: string) {
   const filePath = resolve(folder, sanitizeFilename(file));

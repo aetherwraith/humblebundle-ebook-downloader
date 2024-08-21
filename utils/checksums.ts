@@ -2,8 +2,9 @@ import { WalkEntry } from "@std/fs/walk";
 import { resolve } from "@std/path";
 import { crypto } from "@std/crypto";
 import { encodeHex } from "@std/encoding/hex";
-import { formatFileSize } from "./utils/formatNumbers.ts";
+import { formatFileSize } from "./formatNumbers.ts";
 import { yellow } from "@std/fmt/colors";
+import { Checksums } from "./types.ts";
 
 const checkSumProgress = {
   start() {
@@ -47,7 +48,7 @@ class ChecksumProgress extends TransformStream {
 
 async function computeFileHash(
   stream: ReadableStream<Uint8Array>,
-) {
+): Promise<Checksums> {
   const [shaStream, md5Stream] = stream.tee();
   const [shaHashBuffer, md5HashBuffer] = await Promise.all([
     crypto.subtle.digest("SHA-1", shaStream),
@@ -63,7 +64,7 @@ export async function checksum(
   file: WalkEntry,
   progress: unknown,
   checksumBars: Set<unknown>,
-) {
+): Promise<Checksums> {
   const filePath = resolve(file.path);
   const { size } = await Deno.stat(filePath);
   const fileStream = await Deno.open(filePath, { read: true });
