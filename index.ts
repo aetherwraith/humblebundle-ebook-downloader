@@ -7,19 +7,21 @@ import * as log from "@std/log";
 import { COMMANDS, Options, parseOptions } from "./utils/constants.ts";
 import { checkOptions } from "./utils/optionsUtils.ts";
 import { walk, WalkEntry } from "@std/fs/walk";
-import { loadChecksumCache } from "./utils/fileUtils.ts";
+import { loadChecksumCache, writeJsonFile } from "./utils/fileUtils.ts";
 import { newQueue } from "@henrygd/queue";
 import { checksum } from "./checksums.ts";
 import cliProgress from "cli-progress";
 import process from "node:process";
 import { green, yellow } from "@std/fmt/colors";
+import { getRequestHeaders } from "./utils/web.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
 await checkOptions(options);
 
-// Initialize the file check queue
+// Initialize the queues
 const fileCheckQueue = newQueue(options.parallel);
+const orderInfoQueue = newQueue(options.parallel);
 let totalChecksums = 0;
 
 // Setup progress bar
@@ -72,8 +74,45 @@ switch (options.command) {
         skip: [/json/],
       })
     ) {
+      log.info(file);
       processFile(file);
     }
+    break;
+  }
+  case COMMANDS.cleanup: {
+    const base = "https://www.humblebundle.com";
+    const orderPath = "/api/v1/user/order?ajax=true";
+    const orderResponse = await fetch(base + orderPath, {
+      headers: getRequestHeaders(options),
+    });
+    const gameKeys = await orderResponse.json();
+    log.info(`Fetching order information for ${gameKeys.length} bundles`);
+    const bundlesBar = progress.create(gameKeys.length, 0, { file: "Bundles" });
+    const bundles = [];
+    for (const gameKey of gameKeys) {
+      orderInfoQueue.add(async () => {
+        bundles.push(
+          await fetch(base + `/api/v1/order/${gameKey.gamekey}?ajax=true`, {
+            headers: getRequestHeaders(options),
+          }).then(async (response) => await response.json()),
+        );
+        bundlesBar.increment();
+      });
+    }
+    await orderInfoQueue.done();
+    progress.remove(bundlesBar);
+    log.info(
+      bundles.toSorted((a, b) =>
+        a.product.human_name.localeCompare(b.product.human_name)
+      ),
+    );
+    await writeJsonFile(
+      ".",
+      "bundles.json",
+      bundles.toSorted((a, b) =>
+        a.product.human_name.localeCompare(b.product.human_name)
+      ),
+    );
     break;
   }
 }
@@ -82,4 +121,4 @@ switch (options.command) {
 await fileCheckQueue.done();
 progress.stop();
 
-log.info(`${green("Updated:")} ${yellow(totalChecksums.toString())}`);
+log.info(`${green("Updated checksums:")} ${yellow(totalChecksums.toString())}`);
