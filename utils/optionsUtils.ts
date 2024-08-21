@@ -18,11 +18,17 @@ import { isEql } from "@opentf/std";
 import { includesValue } from "@std/collections/includes-value";
 import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
+import sanitizeFilename from "sanitize-filename";
 
 export async function checkOptions(options: Options) {
   validateInitialOptions(options);
-  if (options.authToken && (await exists(resolve(options.authToken)))) {
-    options.authToken = await Deno.readTextFile(resolve(options.authToken));
+  if (
+    options.authToken &&
+    (await exists(resolve(sanitizeFilename(options.authToken))))
+  ) {
+    options.authToken =
+      (await Deno.readTextFile(resolve(sanitizeFilename(options.authToken))))
+        .replace("\n", "");
   }
   const savedOptions = await readJsonFile(
     options.downloadFolder,
