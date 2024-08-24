@@ -1,43 +1,50 @@
 import { userAgent } from "./constants.ts";
-import {Bundle, GameKey, Options, Totals} from "./types.ts";
+import { Bundle, GameKey, Options, Totals } from "./types.ts";
 
+// Constants
+const BASE_URL = "https://www.humblebundle.com";
+const ORDER_PATH = "/api/v1/user/order?ajax=true";
+
+// Function to create request headers
 export function getRequestHeaders(options: Options): Headers {
   const headers = new Headers();
   headers.set("Accept", "application/json");
   headers.set("Accept-Charset", "utf-8");
   headers.set("User-Agent", userAgent);
   headers.set(
-    "Cookie",
-    `_simpleauth_sess="${options.authToken.replace(/^"|"$/g, "")}";`,
+      "Cookie", `_simpleauth_sess="${options.authToken.replace(/^"|"$/g, "")}";`
   );
   return headers;
 }
 
+// Function to fetch bundle details
+async function fetchBundleDetails(baseUrl: string, gameKey: string, headers: Headers) {
+  const response = await fetch(`${baseUrl}/api/v1/order/${gameKey}?ajax=true`, { headers });
+  return await response.json();
+}
+
+// Main function to get all bundles
 export async function getAllBundles(options: Options, totals: Totals, queues, progress) {
-  const base = "https://www.humblebundle.com";
-  const orderPath = "/api/v1/user/order?ajax=true";
-  const orderResponse = await fetch(base + orderPath, {
+  const orderResponse = await fetch(`${BASE_URL}${ORDER_PATH}`, {
     headers: getRequestHeaders(options),
   });
   const gameKeys: GameKey[] = await orderResponse.json();
   totals.bundles = gameKeys.length;
-  const bundlesBar = progress.create(gameKeys.length, 0, {file: "Bundles"});
+
+  const progressBar = progress.create(gameKeys.length, 0, { file: "Bundles" });
   const bundles: Bundle[] = [];
+
   for (const gameKey of gameKeys) {
     queues.orderInfoQueue.add(async () => {
-      bundles.push(
-          await fetch(base + `/api/v1/order/${gameKey.gamekey}?ajax=true`, {
-            headers: getRequestHeaders(options),
-          }).then(async (response) => await response.json()),
-      );
-      bundlesBar.increment();
+      const bundleDetails = await fetchBundleDetails(BASE_URL, gameKey.gamekey, getRequestHeaders(options));
+      bundles.push(bundleDetails);
+      progressBar.increment();
     });
   }
+
   await queues.orderInfoQueue.done();
-  bundlesBar.stop();
-  progress.remove(bundlesBar);
-  return bundles.sort((a, b) => {
-        return new Date(b.created).valueOf() - new Date(a.created).valueOf();
-      }
-  );
+  progressBar.stop();
+  progress.remove(progressBar);
+
+  return bundles.sort((a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf());
 }
