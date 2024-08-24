@@ -12,9 +12,9 @@ export interface Bundle {
   product: Product;
   gamekey: string;
   uid: string;
-  created: Date;
+  created: string;
   missed_credit: null;
-  subproducts: Subproduct[];
+  subproducts: SubProduct[];
   total_choices: number;
   choices_remaining: number;
   currency: Currency | null;
@@ -50,7 +50,7 @@ export enum Category {
   Widget = "widget",
 }
 
-export interface Subproduct {
+export interface SubProduct {
   machine_name: string;
   url: string;
   downloads: Download[];
@@ -172,4 +172,26 @@ export enum Platform {
 export interface Payee {
   human_name: string;
   machine_name: string;
+}
+
+export interface Totals {
+  bundles: number;
+  checksums: number;
+  checksumsLoaded: number;
+  preFilteredDownloads: number;
+  filteredDownloads: number;
+  removedFiles: number;
+  removedChecksums: number;
+}
+
+export interface Options extends Record<string, unknown> {
+  _?: string[];
+  dedup: boolean;
+  bundleFolders: boolean;
+  parallel: number;
+  format: string[];
+  platform: string[];
+  command?: string;
+  authToken: string;
+  downloadFolder: string;
 }

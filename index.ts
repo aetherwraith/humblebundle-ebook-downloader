@@ -2,20 +2,19 @@
 /// <reference types="npm:@types/node" />
 /// <reference types="npm:@types/cli-progress" />
 
-import { parseArgs } from "@std/cli/parse-args";
+import {parseArgs} from "@std/cli/parse-args";
 import * as log from "@std/log";
-import { COMMANDS, Options, parseOptions } from "./utils/constants.ts";
-import { checkOptions } from "./utils/optionsUtils.ts";
-import { walk, WalkEntry } from "@std/fs/walk";
-import { loadChecksumCache, writeJsonFile } from "./utils/fileUtils.ts";
-import { newQueue } from "@henrygd/queue";
-import { checksum } from "./utils/checksums.ts";
+import {COMMANDS, parseOptions} from "./utils/constants.ts";
+import {checkOptions} from "./utils/optionsUtils.ts";
+import {WalkEntry} from "@std/fs/walk";
+import {clean, loadChecksumCache, walkExistingFiles} from "./utils/fileUtils.ts";
+import {newQueue} from "@henrygd/queue";
+import {checksum} from "./utils/checksums.ts";
 import cliProgress from "cli-progress";
 import process from "node:process";
-import { green, yellow } from "@std/fmt/colors";
-import { getRequestHeaders } from "./utils/web.ts";
-import { Bundle, GameKey } from "./utils/types.ts";
-import { sample } from "@std/collections/sample";
+import {getAllBundles} from "./utils/web.ts";
+import {filterBundles} from "./utils/orders.ts";
+import {Options, Totals} from "./utils/types.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -26,10 +25,15 @@ const queues = {
   fileCheckQueue: newQueue(options.parallel),
   orderInfoQueue: newQueue(options.parallel),
 };
-const totals = {
+
+const totals: Totals = {
   bundles: 0,
   checksums: 0,
   checksumsLoaded: 0,
+  preFilteredDownloads: 0,
+  filteredDownloads: 0,
+  removedFiles: 0,
+  removedChecksums:0,
 };
 
 // Setup progress bar
@@ -48,7 +52,7 @@ const progress = new cliProgress.MultiBar(
 
 // Load checksum cache
 const checksums = await loadChecksumCache(options);
-totals.checksumsLoaded = checksums.length;
+totals.checksumsLoaded = Object.keys(checksums).length;
 
 // Handle process signals
 process.on("SIGINT", () => {
@@ -71,6 +75,7 @@ switch (options.command) {
         Deno.exit(1);
       }
       checksumProgress.setTotal(checksumProgress.total + 1);
+
       queues.fileCheckQueue.add(async () => {
         checksums[file.name] = await checksum(file, progress, checksumBars);
         totals.checksums++;
@@ -78,47 +83,15 @@ switch (options.command) {
       });
     };
 
-    for await (
-      const file of walk(options.downloadFolder, {
-        includeDirs: false,
-        includeSymlinks: false,
-        skip: [/json/],
-      })
-    ) {
+    for await (const file of walkExistingFiles(options)) {
       processFile(file);
     }
     break;
   }
   case COMMANDS.cleanup: {
-    const base = "https://www.humblebundle.com";
-    const orderPath = "/api/v1/user/order?ajax=true";
-    const orderResponse = await fetch(base + orderPath, {
-      headers: getRequestHeaders(options),
-    });
-    const gameKeys: GameKey[] = await orderResponse.json();
-    totals.bundles = gameKeys.length;
-    const bundlesBar = progress.create(gameKeys.length, 0, { file: "Bundles" });
-    const bundles: Bundle[] = [];
-    for (const gameKey of gameKeys) {
-      queues.orderInfoQueue.add(async () => {
-        bundles.push(
-          await fetch(base + `/api/v1/order/${gameKey.gamekey}?ajax=true`, {
-            headers: getRequestHeaders(options),
-          }).then(async (response) => await response.json()),
-        );
-        bundlesBar.increment();
-      });
-    }
-    await queues.orderInfoQueue.done();
-    bundlesBar.stop();
-    progress.remove(bundlesBar);
-    await writeJsonFile(
-      ".",
-      "bundles.json",
-      bundles.toSorted((a, b) =>
-        a.product.human_name.localeCompare(b.product.human_name)
-      ),
-    );
+    const bundles = await getAllBundles(options, totals, queues, progress);
+    const filteredBundles = filterBundles(bundles, options, totals);
+    await clean(filteredBundles, checksums, options, totals);
     break;
   }
 }
