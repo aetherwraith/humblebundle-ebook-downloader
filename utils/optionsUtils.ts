@@ -8,7 +8,6 @@ import {
   MISSING_DOWNLOAD_FOLDER_ERROR,
   optionsFileName,
   SUPPORTED_FORMATS,
-  SUPPORTED_PLATFORMS,
 } from "./constants.ts";
 import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
 import * as log from "@std/log";
@@ -18,7 +17,7 @@ import { includesValue } from "@std/collections/includes-value";
 import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
-import { Options } from "./types.ts";
+import { Options, Platform } from "./types.ts";
 
 export async function checkOptions(options: Options) {
   validateInitialOptions(options);
@@ -77,7 +76,7 @@ function processOptions(
         checkArrayOption(options[key], SUPPORTED_FORMATS);
         break;
       case "platform":
-        checkArrayOption(options[key], SUPPORTED_PLATFORMS);
+        checkArrayOption(options[key], Object.values(Platform));
         break;
     }
     if (!argNoSave.includes(key)) {

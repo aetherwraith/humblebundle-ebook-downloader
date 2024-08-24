@@ -112,7 +112,7 @@ export interface DownloadStruct {
   small?: number | string;
   md5?: string;
   timestamp?: number;
-  uploaded_at?: Date;
+  uploaded_at?: string;
   external_link?: string;
   build_version?: number | string;
   builds?: Build[];
