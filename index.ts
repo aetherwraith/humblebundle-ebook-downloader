@@ -18,7 +18,8 @@ import cliProgress from "cli-progress";
 import process from "node:process";
 import { getAllBundles } from "./utils/web.ts";
 import { filterBundles, filterEbooks } from "./utils/orders.ts";
-import { Options, Totals } from "./utils/types.ts";
+import {Checksums, Options, Totals} from "./utils/types.ts";
+import {downloadItem} from "./utils/download.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -26,8 +27,9 @@ await checkOptions(options);
 
 // Initialize the queues
 const queues = {
-  fileCheckQueue: newQueue(options.parallel),
-  orderInfoQueue: newQueue(options.parallel),
+  fileCheck: newQueue(options.parallel),
+  orderInfo: newQueue(options.parallel),
+  downloads: newQueue(options.parallel),
 };
 
 const totals: Totals = {
@@ -38,6 +40,8 @@ const totals: Totals = {
   filteredDownloads: 0,
   removedFiles: 0,
   removedChecksums: 0,
+  downloads: 0,
+  doneDownloads: 0,
 };
 
 // Setup progress bar
@@ -55,7 +59,7 @@ const progress = new cliProgress.MultiBar(
 );
 
 // Load checksum cache
-const checksums = await loadChecksumCache(options);
+const checksums: Record<string, Checksums> = await loadChecksumCache(options);
 totals.checksumsLoaded = Object.keys(checksums).length;
 
 // Handle process signals
@@ -70,18 +74,13 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.checksums: {
     log.info(`Calculating checksums of all files in ${options.downloadFolder}`);
 
-    const checksumBars = new Set();
     const checksumProgress = progress.create(0, 0, { file: "File Hash Queue" });
 
     const processFile = (file: WalkEntry) => {
-      if (checksumBars.has(file.name)) {
-        log.error(`Duplicate file name: ${file.name}`);
-        Deno.exit(1);
-      }
       checksumProgress.setTotal(checksumProgress.total + 1);
 
-      queues.fileCheckQueue.add(async () => {
-        checksums[file.name] = await checksum(file, progress, checksumBars);
+      queues.fileCheck.add(async () => {
+        checksums[file.name] = await checksum(file.path, progress);
         totals.checksums++;
         checksumProgress.increment();
       });
@@ -101,6 +100,20 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.cleanupEbooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterEbooks(bundles, options, totals);
+    await clean(filteredBundles, checksums, options, totals);
+    break;
+  }
+  case COMMANDS.ebooks: {
+    const bundles = await getAllBundles(options, totals, queues, progress);
+    const filteredBundles = filterEbooks(bundles, options, totals);
+
+    const downloadProgress = progress.create(filteredBundles.length, 0, { file: "Download Queue" });
+    await Promise.all(filteredBundles.map(async (download) =>
+      downloadItem(download, checksums, progress, downloadProgress, queues, totals)
+    ));
+
+    await Promise.all(Object.values(queues).map((queue) => queue.done()));
+
     await clean(filteredBundles, checksums, options, totals);
     break;
   }

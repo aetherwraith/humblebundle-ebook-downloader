@@ -41,7 +41,7 @@ export function writeJsonFileSync(
 export async function loadChecksumCache(options: Options) {
   // load cache file of checksums
 
-  const checksumCache = await readJsonFile(
+  const checksumCache: Record<string, Checksums> = await readJsonFile(
     options.downloadFolder,
     cacheFileName,
   );
