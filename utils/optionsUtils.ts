@@ -18,7 +18,7 @@ import { includesValue } from "@std/collections/includes-value";
 import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
-import {Options} from "./types.ts";
+import { Options } from "./types.ts";
 
 export async function checkOptions(options: Options) {
   validateInitialOptions(options);
