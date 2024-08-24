@@ -6,7 +6,6 @@ import {
   INVALID_COMMAND_ERROR,
   MISSING_AUTH_TOKEN_ERROR,
   MISSING_DOWNLOAD_FOLDER_ERROR,
-  Options,
   optionsFileName,
   SUPPORTED_FORMATS,
   SUPPORTED_PLATFORMS,
@@ -19,6 +18,7 @@ import { includesValue } from "@std/collections/includes-value";
 import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
+import {Options} from "./types.ts";
 
 export async function checkOptions(options: Options) {
   validateInitialOptions(options);

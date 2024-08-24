@@ -1,20 +1,8 @@
-import packageInfo from "../deno.json" with { type: "json" };
-import { ParseOptions } from "@std/cli/parse-args";
-
-export interface Options extends Record<string, unknown> {
-  _?: string[];
-  dedup: boolean;
-  bundleFolders: boolean;
-  parallel: number;
-  format: string[];
-  platform: string[];
-  command?: string;
-  authToken: string;
-  downloadFolder: string;
-}
+import packageInfo from "../deno.json" with {type: "json"};
+import {ParseOptions} from "@std/cli/parse-args";
 
 export const SUPPORTED_FORMATS = ["cbz", "epub", "pdf_hd", "pdf", "mobi"];
-export const SUPPORTED_PLATFORMS = ["linux", "mac", "windows"];
+export const SUPPORTED_PLATFORMS = ["linux", "windows", "mac"];
 export const optionsFileName = "options.json";
 export const cacheFileName = "checksums.json";
 
