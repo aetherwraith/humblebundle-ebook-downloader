@@ -2,6 +2,7 @@ import {
   Bundle,
   DownloadStruct,
   Options,
+  Platform,
   SubProduct,
   Totals,
 } from "./types.ts";
@@ -12,6 +13,7 @@ import { basename, resolve } from "@std/path";
 import { normalizeFormat } from "./generic.ts";
 
 export interface DownloadInfo {
+  date: Date;
   bundle: string;
   name: string;
   fileName: string;
@@ -21,6 +23,7 @@ export interface DownloadInfo {
   sha1?: string;
   md5?: string;
   machineName: string;
+  structName: string;
 }
 
 function createDownloadInfo(
@@ -28,6 +31,7 @@ function createDownloadInfo(
   subProduct: SubProduct,
   struct: DownloadStruct,
   options: Options,
+  date: Date,
 ): DownloadInfo {
   const url = new URL(struct.url.web);
   const fileName = sanitizeFilename(basename(url.pathname));
@@ -48,6 +52,8 @@ function createDownloadInfo(
     url,
     sha1: struct.sha1,
     md5: struct.md5,
+    structName: struct.name ?? fileName,
+    date,
   };
 }
 
@@ -88,6 +94,9 @@ export function filterBundles(
               subProduct,
               struct,
               options,
+              struct.uploaded_at
+                ? new Date(struct.uploaded_at)
+                : new Date(bundle.created),
             );
             const isDuplicate = isDuplicateDownload(
               downloads,
@@ -129,7 +138,7 @@ export function filterBundles(
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function filterEbooks(
+export function filterEbooks(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
@@ -138,11 +147,13 @@ async function filterEbooks(
   log.info(
     `${yellow(bundles.length.toString())} bundles containing ebooks`,
   );
-  const downloads: DownloadInfo[] = [];
+  let downloads: DownloadInfo[] = [];
   bundles.forEach((bundle) => {
     let date = new Date(bundle.created);
     bundle.subproducts.forEach((subProduct) => {
-      const filteredDownloads = subProduct.downloads;
+      const filteredDownloads = subProduct.downloads.filter((elem) =>
+        elem.platform === Platform.Ebook
+      );
       options.format.forEach((format) => {
         filteredDownloads.forEach((download) =>
           download.download_struct.forEach((struct) => {
@@ -151,12 +162,6 @@ async function filterEbooks(
               struct.url &&
               normalizeFormat(struct.name) === format
             ) {
-              if (
-                struct.name.toLowerCase().localeCompare("download") === 0 &&
-                struct.url.web.toLowerCase().indexOf(".pdf") < 0
-              ) {
-                return;
-              }
               totals.preFilteredDownloads++;
               const uploaded_at = struct.uploaded_at
                 ? new Date(struct.uploaded_at)
@@ -178,45 +183,27 @@ async function filterEbooks(
                     (elem) => elem.machineName !== existing.machineName,
                   );
                 }
-                const downloadPath = path.resolve(
-                  downloadFolder,
-                  bundleFolders
-                    ? sanitizeFilename(bundle.product.human_name)
-                    : "",
-                  sanitizeFilename(subProduct.human_name),
+
+                const downloadInfo = createDownloadInfo(
+                  bundle,
+                  subProduct,
+                  struct,
+                  options,
+                  struct.uploaded_at
+                    ? new Date(struct.uploaded_at)
+                    : new Date(bundle.created),
                 );
-                const url = new URL(struct.url.web);
-                const fileName = `${subProduct.machine_name}${
-                  getExtension(
-                    normalizeFormat(struct.name),
+
+                if (
+                  !downloads.some((elem) =>
+                    elem.filePath === downloadInfo.filePath
                   )
-                }`;
-                const filePath = path.resolve(
-                  downloadPath,
-                  sanitizeFilename(fileName),
-                );
-                const cacheKey = path.join(
-                  sanitizeFilename(bundle.product.human_name),
-                  sanitizeFilename(fileName),
-                );
-                if (!downloads.some((elem) => elem.filePath === filePath)) {
-                  // in case we have duplicate purchases check the cacheKey for uniqueness
-                  downloads.push({
-                    bundle: bundle.product.human_name,
-                    // download: struct,
-                    name: subProduct.human_name,
-                    cacheKey,
-                    fileName,
-                    downloadPath,
-                    filePath,
-                    url,
-                    sha1: struct.sha1,
-                    md5: struct.md5,
-                    machineName: subProduct.machine_name,
-                    structName: struct.name,
-                  });
+                ) {
+                  downloads.push(downloadInfo);
                 } else {
-                  log.info(`Potential duplicate purchase ${cacheKey}`);
+                  log.info(
+                    `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${existing?.bundle}, ${existing?.fileName}`,
+                  );
                 }
               }
             }
@@ -225,5 +212,6 @@ async function filterEbooks(
       });
     });
   });
+  totals.filteredDownloads = downloads.length;
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }

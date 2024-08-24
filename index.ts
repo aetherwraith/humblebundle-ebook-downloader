@@ -17,7 +17,7 @@ import { checksum } from "./utils/checksums.ts";
 import cliProgress from "cli-progress";
 import process from "node:process";
 import { getAllBundles } from "./utils/web.ts";
-import { filterBundles } from "./utils/orders.ts";
+import { filterBundles, filterEbooks } from "./utils/orders.ts";
 import { Options, Totals } from "./utils/types.ts";
 
 // Parse and check options
@@ -66,7 +66,7 @@ process.on("SIGINT", () => {
 });
 
 // Main switch case for command execution
-switch (options.command) {
+switch (options.command?.toLowerCase()) {
   case COMMANDS.checksums: {
     log.info(`Calculating checksums of all files in ${options.downloadFolder}`);
 
@@ -95,6 +95,12 @@ switch (options.command) {
   case COMMANDS.cleanup: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterBundles(bundles, options, totals);
+    await clean(filteredBundles, checksums, options, totals);
+    break;
+  }
+  case COMMANDS.cleanupEbooks: {
+    const bundles = await getAllBundles(options, totals, queues, progress);
+    const filteredBundles = filterEbooks(bundles, options, totals);
     await clean(filteredBundles, checksums, options, totals);
     break;
   }

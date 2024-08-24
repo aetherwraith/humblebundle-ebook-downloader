@@ -1,8 +1,8 @@
 import packageInfo from "../deno.json" with { type: "json" };
 import { ParseOptions } from "@std/cli/parse-args";
+import { Platform } from "./types.ts";
 
 export const SUPPORTED_FORMATS = ["cbz", "epub", "pdf_hd", "pdf", "mobi"];
-export const SUPPORTED_PLATFORMS = ["linux", "windows", "mac"];
 export const optionsFileName = "options.json";
 export const cacheFileName = "checksums.json";
 
@@ -13,8 +13,8 @@ export const COMMANDS = {
   all: "all",
   checksums: "checksums",
   cleanup: "cleanup",
-  cleanupEbooks: "cleanupEbooks",
-  cleanupTrove: "cleanupTrove",
+  cleanupEbooks: "cleanupebooks",
+  cleanupTrove: "cleanuptrove",
   ebooks: "ebooks",
   trove: "trove",
 };
@@ -25,7 +25,7 @@ const argDefaults = {
   bundleFolders: true,
   parallel: 1,
   format: SUPPORTED_FORMATS,
-  platform: SUPPORTED_PLATFORMS,
+  platform: Object.values(Platform),
 };
 const argStrings = ["downloadFolder", "authToken"];
 const argAlias = {

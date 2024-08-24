@@ -11,3 +11,12 @@ export function normalizeFormat(format: string) {
       return format.toLowerCase();
   }
 }
+
+export function getExtension(format: string) {
+  switch (format.toLowerCase()) {
+    case "pdf_hd":
+      return ".hd.pdf";
+    default:
+      return `.${format}`;
+  }
+}
