@@ -2,7 +2,7 @@ import {Bundle, Options, Totals} from "./types.ts";
 import * as log from "@std/log";
 import { yellow } from "@std/fmt/colors";
 import sanitizeFilename from "sanitize-filename";
-import { basename, extname, resolve } from "@std/path";
+import { basename, resolve } from "@std/path";
 
 
 export interface DownloadInfo {

@@ -1,6 +1,5 @@
 import { userAgent } from "./constants.ts";
 import {Bundle, GameKey, Options, Totals} from "./types.ts";
-import * as log from "@std/log";
 
 export function getRequestHeaders(options: Options): Headers {
   const headers = new Headers();
