@@ -2,19 +2,23 @@
 /// <reference types="npm:@types/node" />
 /// <reference types="npm:@types/cli-progress" />
 
-import {parseArgs} from "@std/cli/parse-args";
+import { parseArgs } from "@std/cli/parse-args";
 import * as log from "@std/log";
-import {COMMANDS, parseOptions} from "./utils/constants.ts";
-import {checkOptions} from "./utils/optionsUtils.ts";
-import {WalkEntry} from "@std/fs/walk";
-import {clean, loadChecksumCache, walkExistingFiles} from "./utils/fileUtils.ts";
-import {newQueue} from "@henrygd/queue";
-import {checksum} from "./utils/checksums.ts";
+import { COMMANDS, parseOptions } from "./utils/constants.ts";
+import { checkOptions } from "./utils/optionsUtils.ts";
+import { WalkEntry } from "@std/fs/walk";
+import {
+  clean,
+  loadChecksumCache,
+  walkExistingFiles,
+} from "./utils/fileUtils.ts";
+import { newQueue } from "@henrygd/queue";
+import { checksum } from "./utils/checksums.ts";
 import cliProgress from "cli-progress";
 import process from "node:process";
-import {getAllBundles} from "./utils/web.ts";
-import {filterBundles} from "./utils/orders.ts";
-import {Options, Totals} from "./utils/types.ts";
+import { getAllBundles } from "./utils/web.ts";
+import { filterBundles } from "./utils/orders.ts";
+import { Options, Totals } from "./utils/types.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -33,7 +37,7 @@ const totals: Totals = {
   preFilteredDownloads: 0,
   filteredDownloads: 0,
   removedFiles: 0,
-  removedChecksums:0,
+  removedChecksums: 0,
 };
 
 // Setup progress bar

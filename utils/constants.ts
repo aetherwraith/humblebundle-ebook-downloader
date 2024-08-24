@@ -1,5 +1,5 @@
-import packageInfo from "../deno.json" with {type: "json"};
-import {ParseOptions} from "@std/cli/parse-args";
+import packageInfo from "../deno.json" with { type: "json" };
+import { ParseOptions } from "@std/cli/parse-args";
 
 export const SUPPORTED_FORMATS = ["cbz", "epub", "pdf_hd", "pdf", "mobi"];
 export const SUPPORTED_PLATFORMS = ["linux", "windows", "mac"];

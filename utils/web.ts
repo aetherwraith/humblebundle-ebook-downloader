@@ -12,19 +12,31 @@ export function getRequestHeaders(options: Options): Headers {
   headers.set("Accept-Charset", "utf-8");
   headers.set("User-Agent", userAgent);
   headers.set(
-      "Cookie", `_simpleauth_sess="${options.authToken.replace(/^"|"$/g, "")}";`
+    "Cookie",
+    `_simpleauth_sess="${options.authToken.replace(/^"|"$/g, "")}";`,
   );
   return headers;
 }
 
 // Function to fetch bundle details
-async function fetchBundleDetails(baseUrl: string, gameKey: string, headers: Headers) {
-  const response = await fetch(`${baseUrl}/api/v1/order/${gameKey}?ajax=true`, { headers });
+async function fetchBundleDetails(
+  baseUrl: string,
+  gameKey: string,
+  headers: Headers,
+) {
+  const response = await fetch(`${baseUrl}/api/v1/order/${gameKey}?ajax=true`, {
+    headers,
+  });
   return await response.json();
 }
 
 // Main function to get all bundles
-export async function getAllBundles(options: Options, totals: Totals, queues, progress) {
+export async function getAllBundles(
+  options: Options,
+  totals: Totals,
+  queues,
+  progress,
+) {
   const orderResponse = await fetch(`${BASE_URL}${ORDER_PATH}`, {
     headers: getRequestHeaders(options),
   });
@@ -36,7 +48,11 @@ export async function getAllBundles(options: Options, totals: Totals, queues, pr
 
   for (const gameKey of gameKeys) {
     queues.orderInfoQueue.add(async () => {
-      const bundleDetails = await fetchBundleDetails(BASE_URL, gameKey.gamekey, getRequestHeaders(options));
+      const bundleDetails = await fetchBundleDetails(
+        BASE_URL,
+        gameKey.gamekey,
+        getRequestHeaders(options),
+      );
       bundles.push(bundleDetails);
       progressBar.increment();
     });
@@ -46,5 +62,7 @@ export async function getAllBundles(options: Options, totals: Totals, queues, pr
   progressBar.stop();
   progress.remove(progressBar);
 
-  return bundles.sort((a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf());
+  return bundles.sort((a, b) =>
+    new Date(b.created).valueOf() - new Date(a.created).valueOf()
+  );
 }
