@@ -182,6 +182,8 @@ export interface Totals {
   filteredDownloads: number;
   removedFiles: number;
   removedChecksums: number;
+  downloads: number;
+  doneDownloads: number;
 }
 
 export interface Options extends Record<string, unknown> {
