@@ -83,7 +83,7 @@ export async function clean(
     ) {
       log.info(`Deleting extra file: ${file.path}`);
       totals.removedFiles += 1;
-      // await Deno.remove(file.path);
+      await Deno.remove(file.path);
     }
   }
   log.info("Removing checksums from cache");
@@ -91,7 +91,7 @@ export async function clean(
     if (!filteredBundles.some((download) => fileName === download.fileName)) {
       log.info(`Removing checksum from cache: ${fileName}`);
       totals.removedChecksums += 1;
-      // delete checksums[fileName];
+      delete checksums[fileName];
     }
   });
 }

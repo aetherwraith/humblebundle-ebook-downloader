@@ -1,6 +1,4 @@
 #!/usr/bin/env -S deno run --allow-env
-/// <reference types="npm:@types/node" />
-/// <reference types="npm:@types/cli-progress" />
 
 import { parseArgs } from "@std/cli/parse-args";
 import * as log from "@std/log";
@@ -18,8 +16,8 @@ import cliProgress from "cli-progress";
 import process from "node:process";
 import { getAllBundles } from "./utils/web.ts";
 import { filterBundles, filterEbooks } from "./utils/orders.ts";
-import {Checksums, Options, Totals} from "./utils/types.ts";
-import {downloadItem} from "./utils/download.ts";
+import { Checksums, Options, Totals } from "./utils/types.ts";
+import { downloadItem } from "./utils/download.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -67,12 +65,13 @@ process.on("SIGINT", () => {
   for (const queue of Object.values(queues)) {
     queue.clear();
   }
+  progress.stop();
 });
 
 // Main switch case for command execution
 switch (options.command?.toLowerCase()) {
   case COMMANDS.checksums: {
-    log.info(`Calculating checksums of all files in ${options.downloadFolder}`);
+    progress.log(`Calculating checksums of all files in ${options.downloadFolder}`);
 
     const checksumProgress = progress.create(0, 0, { file: "File Hash Queue" });
 
@@ -93,24 +92,35 @@ switch (options.command?.toLowerCase()) {
   }
   case COMMANDS.cleanup: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    const filteredBundles = filterBundles(bundles, options, totals);
+    const filteredBundles = filterBundles(bundles, options, totals, progress);
     await clean(filteredBundles, checksums, options, totals);
     break;
   }
   case COMMANDS.cleanupEbooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    const filteredBundles = filterEbooks(bundles, options, totals);
+    const filteredBundles = filterEbooks(bundles, options, totals, progress);
     await clean(filteredBundles, checksums, options, totals);
     break;
   }
   case COMMANDS.ebooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    const filteredBundles = filterEbooks(bundles, options, totals);
+    const filteredBundles = filterEbooks(bundles, options, totals, progress);
 
-    const downloadProgress = progress.create(filteredBundles.length, 0, { file: "Download Queue" });
-    await Promise.all(filteredBundles.map(async (download) =>
-      downloadItem(download, checksums, progress, downloadProgress, queues, totals)
-    ));
+    const downloadProgress = progress.create(filteredBundles.length, 0, {
+      file: "Download Queue",
+    });
+    await Promise.all(
+      filteredBundles.map((download) =>
+        downloadItem(
+          download,
+          checksums,
+          progress,
+          downloadProgress,
+          queues,
+          totals,
+        )
+      ),
+    );
 
     await Promise.all(Object.values(queues).map((queue) => queue.done()));
 
