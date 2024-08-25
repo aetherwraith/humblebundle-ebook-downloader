@@ -1,50 +1,11 @@
-import { WalkEntry } from "@std/fs/walk";
 import { resolve } from "@std/path";
 import { crypto } from "@std/crypto";
 import { encodeHex } from "@std/encoding/hex";
-import { formatFileSize } from "./formatNumbers.ts";
-import { yellow } from "@std/fmt/colors";
 import { Checksums } from "./types.ts";
-import {exists} from "@std/fs/exists";
+import { exists } from "@std/fs/exists";
 import { DownloadInfo } from "./orders.ts";
-import {basename} from "@std/path/basename";
-
-const checkSumProgress = {
-  start() {
-    this.checksumBar = this.progress.create(
-      this.size,
-      this.completed,
-      {
-        file: yellow(`Hashing: ${basename(this.file)}`),
-      },
-      { formatValue: formatFileSize },
-    );
-  },
-  transform(chunk, controller) {
-    this.completed += chunk.byteLength;
-    this.checksumBar.increment(chunk.byteLength);
-    controller.enqueue(chunk);
-  },
-  flush() {
-    this.progress.remove(this.checksumBar);
-  },
-};
-
-class ChecksumProgress extends TransformStream {
-  constructor(
-    size: number,
-    file: string,
-    progress: unknown,
-  ) {
-    super({
-      ...checkSumProgress,
-      size,
-      file,
-      progress,
-      completed: 0,
-    });
-  }
-}
+import { StreamProgress } from "./streamProgress.ts";
+import { yellow } from "@std/fmt/colors";
 
 export async function computeFileHash(
   stream: ReadableStream<Uint8Array>,
@@ -66,26 +27,40 @@ export async function checksum(
 ): Promise<Checksums> {
   const filePath = resolve(file);
   const { size } = await Deno.stat(filePath);
-  using fileStream = await Deno.open(filePath, { read: true });
+  const fileStream = await Deno.open(filePath, { read: true });
   const pipedStreams = fileStream.readable.pipeThrough(
-    new ChecksumProgress(size, file, progress),
+    new StreamProgress(size, file, progress, 'Hashing', yellow),
   );
   return computeFileHash(pipedStreams);
 }
 
-export async function checkSignatureMatch(download: DownloadInfo, checksums: Record<string, Checksums>, progress: unknown): Promise<boolean> {
-    if (!(await exists(download.filePath))) return false;
+export async function checkSignatureMatch(
+  download: DownloadInfo,
+  checksums: Record<string, Checksums>,
+  progress: unknown,
+): Promise<boolean> {
+  if (!(await exists(download.filePath))) return false;
 
-    const hash = await getOrComputeChecksum(download.fileName, download.filePath, checksums, progress);
-    return isHashVerified(download, hash);
+  const hash = await getOrComputeChecksum(
+    download.fileName,
+    download.filePath,
+    checksums,
+    progress,
+  );
+  return isHashVerified(download, hash);
 }
 
-async function getOrComputeChecksum(fileName: string, filePath: string, checksums: Record<string, Checksums>, progress: unknown): Promise<Checksums> {
-    if (checksums[fileName]) return checksums[fileName];
+async function getOrComputeChecksum(
+  fileName: string,
+  filePath: string,
+  checksums: Record<string, Checksums>,
+  progress: unknown,
+): Promise<Checksums> {
+  if (checksums[fileName]) return checksums[fileName];
 
-    const hash = await checksum(filePath, progress);
-    checksums[fileName] = hash;
-    return hash;
+  const hash = await checksum(filePath, progress);
+  checksums[fileName] = hash;
+  return hash;
 }
 
 function isHashVerified(download: DownloadInfo, hash: Checksums): boolean {

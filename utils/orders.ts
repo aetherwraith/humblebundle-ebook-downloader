@@ -6,7 +6,6 @@ import {
   SubProduct,
   Totals,
 } from "./types.ts";
-import * as log from "@std/log";
 import { yellow } from "@std/fmt/colors";
 import sanitizeFilename from "sanitize-filename";
 import { basename, resolve } from "@std/path";
@@ -24,6 +23,7 @@ export interface DownloadInfo {
   md5?: string;
   machineName: string;
   structName: string;
+  file_size?: number;
 }
 
 function createDownloadInfo(
@@ -54,6 +54,7 @@ function createDownloadInfo(
     md5: struct.md5,
     structName: struct.name ?? fileName,
     date,
+    file_size: struct.file_size
   };
 }
 
@@ -75,8 +76,9 @@ export function filterBundles(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
+  progress: unknown,
 ) {
-  log.info(
+  progress.log(
     `${
       yellow(bundles.length.toString())
     } bundles containing downloadable items`,
@@ -116,7 +118,7 @@ export function filterBundles(
                 const duplicate = downloads.find((elem) =>
                   elem.filePath === downloadInfo.filePath
                 );
-                log.info(
+                progress.log(
                   `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
                 );
               }
@@ -124,7 +126,7 @@ export function filterBundles(
               const duplicate = downloads.find((elem) =>
                 elem.fileName === downloadInfo.fileName
               );
-              log.info(
+              progress.log(
                 `Potential bob purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
               );
             }
@@ -142,9 +144,10 @@ export function filterEbooks(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
+  progress: unknown,
 ) {
   // priority of format to download cbz -> epub -> pdf_hd -> pdf -> mobi
-  log.info(
+  progress.log(
     `${yellow(bundles.length.toString())} bundles containing ebooks`,
   );
   let downloads: DownloadInfo[] = [];
@@ -201,7 +204,7 @@ export function filterEbooks(
                 ) {
                   downloads.push(downloadInfo);
                 } else {
-                  log.info(
+                  progress.log(
                     `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${existing?.bundle}, ${existing?.fileName}`,
                   );
                 }
