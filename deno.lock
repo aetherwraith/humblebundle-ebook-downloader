@@ -121,7 +121,13 @@
     "https://esm.sh/truncate-utf8-bytes": "https://esm.sh/truncate-utf8-bytes@1.0.2",
     "https://esm.sh/v135/@types/truncate-utf8-bytes@~1.0/index.d.ts": "https://esm.sh/v135/@types/truncate-utf8-bytes@1.0.2/index.d.ts"
   },
-  "remote": {},
+  "remote": {
+    "https://deno.land/x/sanitize_filename@1.2.1/mod.ts": "29b1d0d021e4b49d9373b5cfe7e4c3083ceb3d3ca0e0327c517e0c35a1e26611",
+    "https://deno.land/x/sanitize_filename@1.2.1/sanitize.ts": "5f8cc2944ab329280c1c3bf795a2ac35ba155d23f707a83a887fbdd6f15f0927",
+    "https://esm.sh/truncate-utf8-bytes@1.0.2": "7dbe01d394bb3be015ca104eea4bcc7bc5dd842d1416fabd625979dd4cd0cb4c",
+    "https://esm.sh/v135/truncate-utf8-bytes@1.0.2/denonext/truncate-utf8-bytes.mjs": "516c1910575cd609f9631228fe9397f1caa66309c9421c36cb2513a10b8707e2",
+    "https://esm.sh/v135/utf8-byte-length@1.0.4/denonext/browser.js": "23e8fb7c678074c7f1f3813a28b06913fc4f16924f66a247461a3ea9f79eea97"
+  },
   "workspace": {
     "dependencies": [
       "jsr:@henrygd/queue@^1.0.6",

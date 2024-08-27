@@ -3,7 +3,7 @@
 import { parseArgs } from "@std/cli/parse-args";
 import * as log from "@std/log";
 import { COMMANDS, parseOptions } from "./utils/constants.ts";
-import { checkOptions } from "./utils/optionsUtils.ts";
+import { checkOptions } from "./utils/options.ts";
 import { WalkEntry } from "@std/fs/walk";
 import {
   clean,
@@ -120,6 +120,31 @@ switch (options.command?.toLowerCase()) {
           totals,
         )
       ),
+    );
+
+    await Promise.all(Object.values(queues).map((queue) => queue.done()));
+
+    await clean(filteredBundles, checksums, options, totals);
+    break;
+  }
+  case COMMANDS.all: {
+    const bundles = await getAllBundles(options, totals, queues, progress);
+    const filteredBundles = filterBundles(bundles, options, totals, progress);
+
+    const downloadProgress = progress.create(filteredBundles.length, 0, {
+      file: "Download Queue",
+    });
+    await Promise.all(
+        filteredBundles.map((download) =>
+            downloadItem(
+                download,
+                checksums,
+                progress,
+                downloadProgress,
+                queues,
+                totals,
+            )
+        ),
     );
 
     await Promise.all(Object.values(queues).map((queue) => queue.done()));

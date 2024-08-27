@@ -87,7 +87,9 @@ export function filterBundles(
 
   bundles.forEach((bundle) => {
     bundle.subproducts.forEach((subProduct) => {
-      subProduct.downloads.forEach((download) => {
+      subProduct.downloads.filter((elem) =>
+          options.platform.includes(elem.platform)
+      ).forEach((download) => {
         download.download_struct.forEach((struct) => {
           if (struct.url) {
             totals.preFilteredDownloads++;

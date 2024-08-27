@@ -112,7 +112,7 @@ function promptOptionChange(
 ): string | null {
   return prompt(
     `${key} differs from saved.\n\toriginal: ${original}\n\tnew: ${newValue}\nUse new value (Y/n)?`,
-    "Y",
+    "N",
   );
 }
 
