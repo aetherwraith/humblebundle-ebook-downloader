@@ -15,6 +15,7 @@
       "jsr:@std/io@^0.224.3": "jsr:@std/io@0.224.5",
       "jsr:@std/log@^0.224.5": "jsr:@std/log@0.224.5",
       "jsr:@std/path@^1.0.2": "jsr:@std/path@1.0.2",
+      "jsr:@std/path@^1.0.3": "jsr:@std/path@1.0.3",
       "npm:@types/cli-progress": "npm:@types/cli-progress@3.11.6",
       "npm:@types/cli-progress@3.11.6": "npm:@types/cli-progress@3.11.6",
       "npm:@types/node": "npm:@types/node@18.16.19",
@@ -51,6 +52,12 @@
           "jsr:@std/path@^1.0.2"
         ]
       },
+      "@std/fs@1.0.2": {
+        "integrity": "af57555c7a224a6f147d5cced5404692974f7a628ced8eda67e0d22d92d474ec",
+        "dependencies": [
+          "jsr:@std/path@^1.0.3"
+        ]
+      },
       "@std/io@0.224.5": {
         "integrity": "cb84fe655d1273fca94efcff411465027a8b0b4225203f19d6ee98d9c8920a2d"
       },
@@ -64,6 +71,9 @@
       },
       "@std/path@1.0.2": {
         "integrity": "a452174603f8c620bd278a380c596437a9eef50c891c64b85812f735245d9ec7"
+      },
+      "@std/path@1.0.3": {
+        "integrity": "cd89d014ce7eb3742f2147b990f6753ee51d95276bfc211bc50c860c1bc7df6f"
       }
     },
     "npm": {
