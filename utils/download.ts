@@ -24,7 +24,14 @@ export async function downloadItem(
     totals.downloads++
     queues.downloads.add(() =>
       doDownload(download, progress, checksums, downloadProgress, totals)
-    );
+    ).catch((_: unknown) =>             downloadItem(
+        download,
+        checksums,
+        progress,
+        downloadProgress,
+        queues,
+        totals,
+    ));
   }
 }
 

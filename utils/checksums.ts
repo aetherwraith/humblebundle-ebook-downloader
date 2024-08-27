@@ -56,7 +56,7 @@ async function getOrComputeChecksum(
   checksums: Record<string, Checksums>,
   progress: unknown,
 ): Promise<Checksums> {
-  if (checksums[fileName]) return checksums[fileName];
+  if (checksums[fileName]?.md5 && checksums[fileName]?.sha1 ) return checksums[fileName];
 
   const hash = await checksum(filePath, progress);
   checksums[fileName] = hash;

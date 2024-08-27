@@ -4,7 +4,7 @@ import { formatFileSize } from "./formatNumbers.ts";
 
 const streamProgress = {
   start() {
-    this.checksumBar = this.progress.create(
+    this.progressBar = this.progress.create(
       this.size,
       this.completed,
       {
@@ -15,11 +15,11 @@ const streamProgress = {
   },
   transform(chunk, controller) {
     this.completed += chunk.byteLength;
-    this.checksumBar.increment(chunk.byteLength);
+    this.progressBar.increment(chunk.byteLength);
     controller.enqueue(chunk);
   },
   flush() {
-    this.progress.remove(this.checksumBar);
+    this.progress.remove(this.progressBar);
   },
 };
 
