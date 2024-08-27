@@ -7,7 +7,7 @@
       "jsr:@std/cli@^1.0.1": "jsr:@std/cli@1.0.4",
       "jsr:@std/collections@^1.0.5": "jsr:@std/collections@1.0.5",
       "jsr:@std/crypto@^1.0.2": "jsr:@std/crypto@1.0.3",
-      "jsr:@std/encoding@^1.0.2": "jsr:@std/encoding@1.0.2",
+      "jsr:@std/encoding@^1.0.2": "jsr:@std/encoding@1.0.3",
       "jsr:@std/fmt@^1.0.0": "jsr:@std/fmt@1.0.0",
       "jsr:@std/fmt@^1.0.0-rc.1": "jsr:@std/fmt@1.0.0",
       "jsr:@std/fs@^1.0.0-rc.5": "jsr:@std/fs@1.0.1",
@@ -36,8 +36,8 @@
       "@std/crypto@1.0.3": {
         "integrity": "a2a32f51ddef632d299e3879cd027c630dcd4d1d9a5285d6e6788072f4e51e7f"
       },
-      "@std/encoding@1.0.2": {
-        "integrity": "7ed640c777e3275550e2cd937c440acdbebfdcd2d13ef67052f0536bf43e707f"
+      "@std/encoding@1.0.3": {
+        "integrity": "5dbc2d7f5aa6062de7e19862ea856ac7a0dcce0b6fb46bb7b332d3bdcd4408b7"
       },
       "@std/fmt@1.0.0": {
         "integrity": "8a95c9fdbb61559418ccbc0f536080cf43341655e1444f9d375a66886ceaaa3d"
