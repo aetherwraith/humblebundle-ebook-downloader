@@ -51,7 +51,7 @@ export async function doDownload(
   });
   const fileStream = saveFile.writable;
   const req = await fetch(download.url);
-  const size = download.file_size ?? Number(req.headers["content-length"]);
+  const size = req.headers.get("content-length") ? Number(req.headers.get("content-length")) : download.file_size;
   const downloadStream = req.body?.pipeThrough(
     new StreamProgress(size, download.filePath, progress, "Downloading", cyan),
   );
