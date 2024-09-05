@@ -9,12 +9,12 @@
       "jsr:@std/collections@^1.0.5": "jsr:@std/collections@1.0.5",
       "jsr:@std/crypto@^1.0.2": "jsr:@std/crypto@1.0.3",
       "jsr:@std/encoding@^1.0.2": "jsr:@std/encoding@1.0.4",
-      "jsr:@std/fmt@^1.0.0": "jsr:@std/fmt@1.0.1",
-      "jsr:@std/fmt@^1.0.1": "jsr:@std/fmt@1.0.1",
-      "jsr:@std/fs@^1.0.1": "jsr:@std/fs@1.0.2",
-      "jsr:@std/fs@^1.0.2": "jsr:@std/fs@1.0.2",
-      "jsr:@std/io@^0.224.6": "jsr:@std/io@0.224.6",
-      "jsr:@std/log@^0.224.5": "jsr:@std/log@0.224.6",
+      "jsr:@std/fmt@^1.0.0": "jsr:@std/fmt@1.0.2",
+      "jsr:@std/fmt@^1.0.2": "jsr:@std/fmt@1.0.2",
+      "jsr:@std/fs@^1.0.1": "jsr:@std/fs@1.0.3",
+      "jsr:@std/fs@^1.0.3": "jsr:@std/fs@1.0.3",
+      "jsr:@std/io@^0.224.7": "jsr:@std/io@0.224.7",
+      "jsr:@std/log@^0.224.5": "jsr:@std/log@0.224.7",
       "jsr:@std/path@^1.0.2": "jsr:@std/path@1.0.3",
       "jsr:@std/path@^1.0.3": "jsr:@std/path@1.0.3",
       "jsr:@std/path@^1.0.4": "jsr:@std/path@1.0.4",
@@ -45,17 +45,8 @@
       "@std/encoding@1.0.4": {
         "integrity": "2266cd516b32369e3dc5695717c96bf88343a1f761d6e6187a02a2bbe2af86ae"
       },
-      "@std/fmt@1.0.1": {
-        "integrity": "ef76c37faa7720faa8c20fd8cc74583f9b1e356dfd630c8714baa716a45856ab"
-      },
       "@std/fmt@1.0.2": {
         "integrity": "87e9dfcdd3ca7c066e0c3c657c1f987c82888eb8103a3a3baa62684ffeb0f7a7"
-      },
-      "@std/fs@1.0.2": {
-        "integrity": "af57555c7a224a6f147d5cced5404692974f7a628ced8eda67e0d22d92d474ec",
-        "dependencies": [
-          "jsr:@std/path@^1.0.3"
-        ]
       },
       "@std/fs@1.0.3": {
         "integrity": "3cb839b1360b0a42d8b367c3093bfe4071798e6694fa44cf1963e04a8edba4fe",
@@ -63,18 +54,18 @@
           "jsr:@std/path@^1.0.4"
         ]
       },
-      "@std/io@0.224.6": {
-        "integrity": "eefe034a370be34daf066c8634dd645635d099bb21eccf110f0bdc28d9040891",
+      "@std/io@0.224.7": {
+        "integrity": "a70848793c44a7c100926571a8c9be68ba85487bfcd4d0540d86deabe1123dc9",
         "dependencies": [
           "jsr:@std/bytes@^1.0.2"
         ]
       },
-      "@std/log@0.224.6": {
-        "integrity": "c34e7b69fe84b2152ce2b0a1b5e211b26e6a1ce6a6b68a217b9342fd13ed95a4",
+      "@std/log@0.224.7": {
+        "integrity": "021941e5cd16de60cb11599c9b36f892aea95987fe66c753922808da27909e18",
         "dependencies": [
-          "jsr:@std/fmt@^1.0.1",
-          "jsr:@std/fs@^1.0.2",
-          "jsr:@std/io@^0.224.6"
+          "jsr:@std/fmt@^1.0.2",
+          "jsr:@std/fs@^1.0.3",
+          "jsr:@std/io@^0.224.7"
         ]
       },
       "@std/path@1.0.3": {
