@@ -6,7 +6,7 @@
       "jsr:@opentf/std@^0.12.0": "jsr:@opentf/std@0.12.0",
       "jsr:@std/bytes@^1.0.2": "jsr:@std/bytes@1.0.2",
       "jsr:@std/cli@^1.0.1": "jsr:@std/cli@1.0.6",
-      "jsr:@std/collections@^1.0.5": "jsr:@std/collections@1.0.5",
+      "jsr:@std/collections@^1.0.5": "jsr:@std/collections@1.0.6",
       "jsr:@std/crypto@^1.0.2": "jsr:@std/crypto@1.0.3",
       "jsr:@std/encoding@^1.0.2": "jsr:@std/encoding@1.0.4",
       "jsr:@std/fmt@^1.0.0": "jsr:@std/fmt@1.0.2",
@@ -35,8 +35,8 @@
       "@std/cli@1.0.6": {
         "integrity": "d22d8b38c66c666d7ad1f2a66c5b122da1704f985d3c47f01129f05abb6c5d3d"
       },
-      "@std/collections@1.0.5": {
-        "integrity": "ab9eac23b57a0c0b89ba45134e61561f69f3d001f37235a248ed40be260c0c10"
+      "@std/collections@1.0.6": {
+        "integrity": "60ad252af7df0594e6455f697920a37cd523ad66469fefcc9735e362826ac01d"
       },
       "@std/crypto@1.0.3": {
         "integrity": "a2a32f51ddef632d299e3879cd027c630dcd4d1d9a5285d6e6788072f4e51e7f"
