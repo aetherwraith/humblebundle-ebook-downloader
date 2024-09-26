@@ -71,7 +71,9 @@ process.on("SIGINT", () => {
 // Main switch case for command execution
 switch (options.command?.toLowerCase()) {
   case COMMANDS.checksums: {
-    progress.log(`Calculating checksums of all files in ${options.downloadFolder}`);
+    progress.log(
+      `Calculating checksums of all files in ${options.downloadFolder}`,
+    );
 
     const checksumProgress = progress.create(0, 0, { file: "File Hash Queue" });
 
@@ -135,16 +137,16 @@ switch (options.command?.toLowerCase()) {
       file: "Download Queue",
     });
     await Promise.all(
-        filteredBundles.map((download) =>
-            downloadItem(
-                download,
-                checksums,
-                progress,
-                downloadProgress,
-                queues,
-                totals,
-            )
-        ),
+      filteredBundles.map((download) =>
+        downloadItem(
+          download,
+          checksums,
+          progress,
+          downloadProgress,
+          queues,
+          totals,
+        )
+      ),
     );
 
     await Promise.all(Object.values(queues).map((queue) => queue.done()));

@@ -1,7 +1,6 @@
 import { basename } from "@std/path/basename";
 import { formatFileSize } from "./formatNumbers.ts";
 
-
 const streamProgress = {
   start() {
     this.progressBar = this.progress.create(

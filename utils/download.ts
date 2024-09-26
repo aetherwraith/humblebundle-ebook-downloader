@@ -21,17 +21,19 @@ export async function downloadItem(
     totals.doneDownloads++;
     downloadProgress.increment();
   } else {
-    totals.downloads++
+    totals.downloads++;
     queues.downloads.add(() =>
       doDownload(download, progress, checksums, downloadProgress, totals)
-    ).catch((_: unknown) =>             downloadItem(
+    ).catch((_: unknown) =>
+      downloadItem(
         download,
         checksums,
         progress,
         downloadProgress,
         queues,
         totals,
-    ));
+      )
+    );
   }
 }
 
@@ -51,7 +53,9 @@ export async function doDownload(
   });
   const fileStream = saveFile.writable;
   const req = await fetch(download.url);
-  const size = req.headers.get("content-length") ? Number(req.headers.get("content-length")) : download.file_size;
+  const size = req.headers.get("content-length")
+    ? Number(req.headers.get("content-length"))
+    : download.file_size;
   const downloadStream = req.body?.pipeThrough(
     new StreamProgress(size, download.filePath, progress, "Downloading", cyan),
   );

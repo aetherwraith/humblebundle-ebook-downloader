@@ -54,7 +54,7 @@ function createDownloadInfo(
     md5: struct.md5,
     structName: struct.name ?? fileName,
     date,
-    file_size: struct.file_size
+    file_size: struct.file_size,
   };
 }
 
@@ -88,7 +88,7 @@ export function filterBundles(
   bundles.forEach((bundle) => {
     bundle.subproducts.forEach((subProduct) => {
       subProduct.downloads.filter((elem) =>
-          options.platform.includes(elem.platform)
+        options.platform.includes(elem.platform)
       ).forEach((download) => {
         download.download_struct.forEach((struct) => {
           if (struct.url) {

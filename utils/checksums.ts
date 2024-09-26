@@ -29,7 +29,7 @@ export async function checksum(
   const { size } = await Deno.stat(filePath);
   const fileStream = await Deno.open(filePath, { read: true });
   const pipedStreams = fileStream.readable.pipeThrough(
-    new StreamProgress(size, file, progress, 'Hashing', yellow),
+    new StreamProgress(size, file, progress, "Hashing", yellow),
   );
   return computeFileHash(pipedStreams);
 }
@@ -56,7 +56,9 @@ async function getOrComputeChecksum(
   checksums: Record<string, Checksums>,
   progress: unknown,
 ): Promise<Checksums> {
-  if (checksums[fileName]?.md5 && checksums[fileName]?.sha1 ) return checksums[fileName];
+  if (checksums[fileName]?.md5 && checksums[fileName]?.sha1) {
+    return checksums[fileName];
+  }
 
   const hash = await checksum(filePath, progress);
   checksums[fileName] = hash;
@@ -64,5 +66,6 @@ async function getOrComputeChecksum(
 }
 
 function isHashVerified(download: DownloadInfo, hash: Checksums): boolean {
-    return (download.sha1 && download.sha1 === hash.sha1) || (download.md5 && download.md5 === hash.md5);
+  return (download.sha1 && download.sha1 === hash.sha1) ||
+    (download.md5 && download.md5 === hash.md5);
 }
