@@ -13,9 +13,14 @@ import {
 import { newQueue } from "@henrygd/queue";
 import { checksum } from "./utils/checksums.ts";
 import cliProgress from "cli-progress";
+import type { MultiBar } from "cli-progress";
 import process from "node:process";
 import { getAllBundles } from "./utils/web.ts";
-import { filterBundles, filterEbooks } from "./utils/orders.ts";
+import {
+  type DownloadInfo,
+  filterBundles,
+  filterEbooks,
+} from "./utils/orders.ts";
 import { Checksums, Options, Totals } from "./utils/types.ts";
 import { downloadItem } from "./utils/download.ts";
 
@@ -43,7 +48,7 @@ const totals: Totals = {
 };
 
 // Setup progress bar
-const progress = new cliProgress.MultiBar(
+const progress: MultiBar = new cliProgress.MultiBar(
   {
     clearOnComplete: true,
     format:
@@ -67,6 +72,28 @@ process.on("SIGINT", () => {
   }
   progress.stop();
 });
+
+async function downloadItems(filteredBundles: DownloadInfo[]) {
+  const downloadProgress = progress.create(filteredBundles.length, 0, {
+    file: "Download Queue",
+  });
+  await Promise.all(
+    filteredBundles.map((download) =>
+      downloadItem(
+        download,
+        checksums,
+        progress,
+        downloadProgress,
+        queues,
+        totals,
+      )
+    ),
+  );
+
+  await Promise.all(Object.values(queues).map((queue) => queue.done()));
+
+  await clean(filteredBundles, checksums, options, totals);
+}
 
 // Main switch case for command execution
 switch (options.command?.toLowerCase()) {
@@ -107,51 +134,13 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.ebooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterEbooks(bundles, options, totals, progress);
-
-    const downloadProgress = progress.create(filteredBundles.length, 0, {
-      file: "Download Queue",
-    });
-    await Promise.all(
-      filteredBundles.map((download) =>
-        downloadItem(
-          download,
-          checksums,
-          progress,
-          downloadProgress,
-          queues,
-          totals,
-        )
-      ),
-    );
-
-    await Promise.all(Object.values(queues).map((queue) => queue.done()));
-
-    await clean(filteredBundles, checksums, options, totals);
+    await downloadItems(filteredBundles);
     break;
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterBundles(bundles, options, totals, progress);
-
-    const downloadProgress = progress.create(filteredBundles.length, 0, {
-      file: "Download Queue",
-    });
-    await Promise.all(
-      filteredBundles.map((download) =>
-        downloadItem(
-          download,
-          checksums,
-          progress,
-          downloadProgress,
-          queues,
-          totals,
-        )
-      ),
-    );
-
-    await Promise.all(Object.values(queues).map((queue) => queue.done()));
-
-    await clean(filteredBundles, checksums, options, totals);
+    await downloadItems(filteredBundles);
     break;
   }
 }
