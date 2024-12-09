@@ -1,3 +1,8 @@
+import { yellow } from "@std/fmt/colors";
+import { basename, resolve } from "@std/path";
+import type { MultiBar } from "cli-progress";
+import sanitizeFilename from "sanitize-filename";
+import { normalizeFormat } from "./generic.ts";
 import {
   Bundle,
   DownloadStruct,
@@ -6,11 +11,6 @@ import {
   SubProduct,
   Totals,
 } from "./types.ts";
-import { yellow } from "@std/fmt/colors";
-import sanitizeFilename from "sanitize-filename";
-import { basename, resolve } from "@std/path";
-import { normalizeFormat } from "./generic.ts";
-import type { MultiBar } from "cli-progress";
 
 export interface DownloadInfo {
   date: Date;
@@ -65,12 +65,17 @@ function isDuplicateDownload(
   struct: DownloadStruct,
   options: Options,
 ): boolean {
-  return options.dedup &&
-    downloads.some((elem) =>
-      elem.fileName === downloadInfo.fileName ||
-      (struct.sha1 && struct.sha1 === elem.sha1) &&
-        (struct.md5 && struct.md5 === elem.md5)
-    );
+  return (
+    options.dedup &&
+    downloads.some(
+      (elem) =>
+        elem.fileName === downloadInfo.fileName ||
+        (struct.sha1 &&
+          struct.sha1 === elem.sha1 &&
+          struct.md5 &&
+          struct.md5 === elem.md5),
+    )
+  );
 }
 
 export function filterBundles(
@@ -81,61 +86,63 @@ export function filterBundles(
 ) {
   progress.log(
     `${
-      yellow(bundles.length.toString())
+      yellow(
+        bundles.length.toString(),
+      )
     } bundles containing downloadable items`,
   );
   const downloads: DownloadInfo[] = [];
 
   bundles.forEach((bundle) => {
     bundle.subproducts.forEach((subProduct) => {
-      subProduct.downloads.filter((elem) =>
-        options.platform.includes(elem.platform)
-      ).forEach((download) => {
-        download.download_struct.forEach((struct) => {
-          if (struct.url) {
-            totals.preFilteredDownloads++;
-            const downloadInfo = createDownloadInfo(
-              bundle,
-              subProduct,
-              struct,
-              options,
-              struct.uploaded_at
-                ? new Date(struct.uploaded_at)
-                : new Date(bundle.created),
-            );
-            const isDuplicate = isDuplicateDownload(
-              downloads,
-              downloadInfo,
-              struct,
-              options,
-            );
+      subProduct.downloads
+        .filter((elem) => options.platform.includes(elem.platform))
+        .forEach((download) => {
+          download.download_struct.forEach((struct) => {
+            if (struct.url) {
+              totals.preFilteredDownloads++;
+              const downloadInfo = createDownloadInfo(
+                bundle,
+                subProduct,
+                struct,
+                options,
+                struct.uploaded_at
+                  ? new Date(struct.uploaded_at)
+                  : new Date(bundle.created),
+              );
+              const isDuplicate = isDuplicateDownload(
+                downloads,
+                downloadInfo,
+                struct,
+                options,
+              );
 
-            if (!isDuplicate) {
-              if (
-                !downloads.some((elem) =>
-                  elem.filePath === downloadInfo.filePath
-                )
-              ) {
-                downloads.push(downloadInfo);
+              if (!isDuplicate) {
+                if (
+                  !downloads.some(
+                    (elem) => elem.filePath === downloadInfo.filePath,
+                  )
+                ) {
+                  downloads.push(downloadInfo);
+                } else {
+                  const duplicate = downloads.find(
+                    (elem) => elem.filePath === downloadInfo.filePath,
+                  );
+                  progress.log(
+                    `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
+                  );
+                }
               } else {
-                const duplicate = downloads.find((elem) =>
-                  elem.filePath === downloadInfo.filePath
+                const duplicate = downloads.find(
+                  (elem) => elem.fileName === downloadInfo.fileName,
                 );
                 progress.log(
-                  `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
+                  `Potential bob purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
                 );
               }
-            } else {
-              const duplicate = downloads.find((elem) =>
-                elem.fileName === downloadInfo.fileName
-              );
-              progress.log(
-                `Potential bob purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
-              );
             }
-          }
+          });
         });
-      });
     });
   });
 
@@ -157,8 +164,8 @@ export function filterEbooks(
   bundles.forEach((bundle) => {
     let date = new Date(bundle.created);
     bundle.subproducts.forEach((subProduct) => {
-      const filteredDownloads = subProduct.downloads.filter((elem) =>
-        elem.platform === Platform.Ebook
+      const filteredDownloads = subProduct.downloads.filter(
+        (elem) => elem.platform === Platform.Ebook,
       );
       options.format.forEach((format) => {
         filteredDownloads.forEach((download) =>
@@ -201,8 +208,8 @@ export function filterEbooks(
                 );
 
                 if (
-                  !downloads.some((elem) =>
-                    elem.filePath === downloadInfo.filePath
+                  !downloads.some(
+                    (elem) => elem.filePath === downloadInfo.filePath,
                   )
                 ) {
                   downloads.push(downloadInfo);

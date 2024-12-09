@@ -1,7 +1,7 @@
-import { userAgent } from "./constants.ts";
-import { Bundle, GameKey, Options, Queues, Totals } from "./types.ts";
-import { writeJsonFile } from "./fileUtils.ts";
 import type { MultiBar, SingleBar } from "cli-progress";
+import { userAgent } from "./constants.ts";
+import { writeJsonFile } from "./fileUtils.ts";
+import { Bundle, GameKey, Options, Queues, Totals } from "./types.ts";
 
 // Constants
 const BASE_URL = "https://www.humblebundle.com";
@@ -68,7 +68,7 @@ export async function getAllBundles(
 
   await writeJsonFile(options.downloadFolder, "bundles.json", bundles);
 
-  return bundles.sort((a, b) =>
-    new Date(b.created).valueOf() - new Date(a.created).valueOf()
+  return bundles.sort(
+    (a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf(),
   );
 }

@@ -1,12 +1,12 @@
-import { resolve } from "@std/path";
-import sanitizeFilename from "sanitize-filename";
-import process from "node:process";
-import { cacheFileName } from "./constants.ts";
-import * as log from "@std/log";
 import { green } from "@std/fmt/colors";
-import { Checksums, Options, Totals } from "./types.ts";
 import { walk } from "@std/fs/walk";
+import * as log from "@std/log";
+import { resolve } from "@std/path";
+import process from "node:process";
+import sanitizeFilename from "sanitize-filename";
+import { cacheFileName } from "./constants.ts";
 import { DownloadInfo } from "./orders.ts";
+import { Checksums, Options, Totals } from "./types.ts";
 
 export async function readJsonFile(folder: string, file: string) {
   const filePath = resolve(folder, sanitizeFilename(file));
@@ -76,11 +76,7 @@ export async function clean(
 ) {
   log.info("Removing files...");
   for await (const file of walkExistingFiles(options)) {
-    if (
-      !filteredBundles.some(
-        (download) => file.path === download.filePath,
-      )
-    ) {
+    if (!filteredBundles.some((download) => file.path === download.filePath)) {
       log.info(`Deleting extra file: ${file.path}`);
       totals.removedFiles += 1;
       await Deno.remove(file.path);
