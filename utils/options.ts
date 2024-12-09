@@ -1,3 +1,10 @@
+import { isEql } from "@opentf/std";
+import { includesValue } from "@std/collections/includes-value";
+import { green, red } from "@std/fmt/colors";
+import { exists } from "@std/fs/exists";
+import * as log from "@std/log";
+import { resolve } from "@std/path";
+import sanitizeFilename from "sanitize-filename";
 import {
   argDescriptions,
   argNoSave,
@@ -10,13 +17,6 @@ import {
   SUPPORTED_FORMATS,
 } from "./constants.ts";
 import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
-import * as log from "@std/log";
-import { green, red } from "@std/fmt/colors";
-import { isEql } from "@opentf/std";
-import { includesValue } from "@std/collections/includes-value";
-import { exists } from "@std/fs/exists";
-import { resolve } from "@std/path";
-import sanitizeFilename from "sanitize-filename";
 import { Options, Platform } from "./types.ts";
 
 export async function checkOptions(options: Options) {
@@ -25,9 +25,9 @@ export async function checkOptions(options: Options) {
     options.authToken &&
     (await exists(resolve(sanitizeFilename(options.authToken))))
   ) {
-    options.authToken =
-      (await Deno.readTextFile(resolve(sanitizeFilename(options.authToken))))
-        .replace("\n", "");
+    options.authToken = (
+      await Deno.readTextFile(resolve(sanitizeFilename(options.authToken)))
+    ).replace("\n", "");
   }
   const savedOptions = await readJsonFile(
     options.downloadFolder,
@@ -126,7 +126,9 @@ function checkArrayOption(values: string[], validValues: string[]): void {
   if (!values.every((value) => validValues.includes(value))) {
     optionError(
       `${values} contains one or more invalid formats. Supported formats are ${
-        validValues.join(",")
+        validValues.join(
+          ",",
+        )
       }`,
     );
   }

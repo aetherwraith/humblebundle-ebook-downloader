@@ -1,12 +1,12 @@
-import { resolve } from "@std/path";
 import { crypto } from "@std/crypto";
 import { encodeHex } from "@std/encoding/hex";
-import { Checksums } from "./types.ts";
+import { yellow } from "@std/fmt/colors";
 import { exists } from "@std/fs/exists";
+import { resolve } from "@std/path";
+import type { MultiBar } from "cli-progress";
 import { DownloadInfo } from "./orders.ts";
 import { StreamProgress } from "./streamProgress.ts";
-import { yellow } from "@std/fmt/colors";
-import type { MultiBar } from "cli-progress";
+import { Checksums } from "./types.ts";
 
 export async function computeFileHash(
   stream: ReadableStream<Uint8Array>,
@@ -39,6 +39,7 @@ export async function checkSignatureMatch(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
   progress: MultiBar,
+  totals: Totals,
 ): Promise<boolean> {
   if (!(await exists(download.filePath))) return false;
 
@@ -47,6 +48,7 @@ export async function checkSignatureMatch(
     download.filePath,
     checksums,
     progress,
+    totals,
   );
   return isHashVerified(download, hash);
 }
@@ -56,17 +58,22 @@ async function getOrComputeChecksum(
   filePath: string,
   checksums: Record<string, Checksums>,
   progress: MultiBar,
+  totals: Totals,
 ): Promise<Checksums> {
   if (checksums[fileName]?.md5 && checksums[fileName]?.sha1) {
     return checksums[fileName];
   }
 
   const hash = await checksum(filePath, progress);
+  totals.checksums++;
   checksums[fileName] = hash;
   return hash;
 }
 
 function isHashVerified(download: DownloadInfo, hash: Checksums): boolean {
-  return (download.sha1 && download.sha1 === hash.sha1) ||
-    (download.md5 && download.md5 === hash.md5) || false;
+  return (
+    (download.sha1 && download.sha1 === hash.sha1) ||
+    (download.md5 && download.md5 === hash.md5) ||
+    false
+  );
 }

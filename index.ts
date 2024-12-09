@@ -12,17 +12,13 @@ import {
 } from "./utils/fileUtils.ts";
 import { newQueue } from "@henrygd/queue";
 import { checksum } from "./utils/checksums.ts";
-import cliProgress from "cli-progress";
 import type { MultiBar } from "cli-progress";
+import cliProgress from "cli-progress";
 import process from "node:process";
 import { getAllBundles } from "./utils/web.ts";
-import {
-  type DownloadInfo,
-  filterBundles,
-  filterEbooks,
-} from "./utils/orders.ts";
+import { filterBundles, filterEbooks } from "./utils/orders.ts";
 import { Checksums, Options, Totals } from "./utils/types.ts";
-import { downloadItem } from "./utils/download.ts";
+import { downloadItems } from "./utils/download.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -73,25 +69,6 @@ process.on("SIGINT", () => {
   progress.stop();
 });
 
-function downloadItems(filteredBundles: DownloadInfo[]) {
-  const downloadProgress = progress.create(filteredBundles.length, 0, {
-    file: "Download Queue",
-  });
-  for (const download of filteredBundles) {
-    queues.downloads
-      .add(async () =>
-        downloadItem(
-          download,
-          checksums,
-          progress,
-          downloadProgress,
-          queues,
-          totals,
-        )
-      );
-  }
-}
-
 // Main switch case for command execution
 switch (options.command?.toLowerCase()) {
   case COMMANDS.checksums: {
@@ -131,13 +108,13 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.ebooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterEbooks(bundles, options, totals, progress);
-    downloadItems(filteredBundles);
+    downloadItems(filteredBundles, progress, checksums, queues, totals);
     break;
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterBundles(bundles, options, totals, progress);
-    downloadItems(filteredBundles);
+    downloadItems(filteredBundles, progress, checksums, queues, totals);
     break;
   }
 }

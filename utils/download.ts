@@ -1,12 +1,12 @@
-import { DownloadInfo } from "./orders.ts";
-import { checkSignatureMatch, computeFileHash } from "./checksums.ts";
-import { Checksums, Queues, Totals } from "./types.ts";
-import { resolve } from "@std/path/resolve";
-import { StreamProgress } from "./streamProgress.ts";
-import { cyan } from "@std/fmt/colors";
-import type { MultiBar, SingleBar } from "cli-progress";
 import { retry, RetryError } from "@std/async";
+import { cyan } from "@std/fmt/colors";
+import { resolve } from "@std/path/resolve";
+import type { MultiBar, SingleBar } from "cli-progress";
+import { checkSignatureMatch, computeFileHash } from "./checksums.ts";
 import { retryOptions } from "./constants.ts";
+import { DownloadInfo } from "./orders.ts";
+import { StreamProgress } from "./streamProgress.ts";
+import { Checksums, Queues, Totals } from "./types.ts";
 
 export async function downloadItem(
   download: DownloadInfo,
@@ -18,7 +18,7 @@ export async function downloadItem(
 ): Promise<void> {
   if (
     await queues.fileCheck.add(() =>
-      checkSignatureMatch(download, checksums, progress)
+      checkSignatureMatch(download, checksums, progress, totals)
     )
   ) {
     totals.doneDownloads++;
@@ -74,4 +74,28 @@ export async function doDownload(
   checksums[download.fileName] = hash;
   totals.doneDownloads++;
   downloadProgress.increment();
+}
+
+export function downloadItems(
+  filteredBundles: DownloadInfo[],
+  progress: MultiBar,
+  checksums: Record<string, Checksums>,
+  queues: Queues,
+  totals: Totals,
+) {
+  const downloadProgress = progress.create(filteredBundles.length, 0, {
+    file: "Download Queue",
+  });
+  for (const download of filteredBundles) {
+    queues.downloads.add(async () =>
+      downloadItem(
+        download,
+        checksums,
+        progress,
+        downloadProgress,
+        queues,
+        totals,
+      )
+    );
+  }
 }
