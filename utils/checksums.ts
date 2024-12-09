@@ -67,5 +67,5 @@ async function getOrComputeChecksum(
 
 function isHashVerified(download: DownloadInfo, hash: Checksums): boolean {
   return (download.sha1 && download.sha1 === hash.sha1) ||
-    (download.md5 && download.md5 === hash.md5);
+    (download.md5 && download.md5 === hash.md5) || false;
 }

@@ -4,12 +4,13 @@ import { Checksums, Totals } from "./types.ts";
 import { resolve } from "@std/path/resolve";
 import { StreamProgress } from "./streamProgress.ts";
 import { cyan } from "@std/fmt/colors";
+import type { MultiBar, SingleBar } from "cli-progress";
 
 export async function downloadItem(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
-  progress,
-  downloadProgress,
+  progress: MultiBar,
+  downloadProgress: SingleBar,
   queues,
   totals: Totals,
 ): Promise<void> {
@@ -39,9 +40,9 @@ export async function downloadItem(
 
 export async function doDownload(
   download: DownloadInfo,
-  progress: unknown,
+  progress: MultiBar,
   checksums: Record<string, Checksums>,
-  downloadProgress: unknown,
+  downloadProgress: SingleBar,
   totals: Totals,
 ) {
   const filePath = resolve(download.filePath);
@@ -53,9 +54,7 @@ export async function doDownload(
   });
   const fileStream = saveFile.writable;
   const req = await fetch(download.url);
-  const size = req.headers.get("content-length")
-    ? Number(req.headers.get("content-length"))
-    : download.file_size;
+  const size = Number(req.headers.get("content-length"))
   const downloadStream = req.body?.pipeThrough(
     new StreamProgress(size, download.filePath, progress, "Downloading", cyan),
   );
