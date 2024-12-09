@@ -1,4 +1,5 @@
 import { basename } from "@std/path/basename";
+import type { MultiBar } from "cli-progress";
 import { formatFileSize } from "./formatNumbers.ts";
 
 const streamProgress = {
@@ -26,7 +27,7 @@ export class StreamProgress extends TransformStream {
   constructor(
     size: number,
     file: string,
-    progress: unknown,
+    progress: MultiBar,
     operation: string,
     colour: Function,
   ) {

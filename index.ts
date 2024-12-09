@@ -31,7 +31,7 @@ await checkOptions(options);
 // Initialize the queues
 const queues = {
   fileCheck: newQueue(options.parallel),
-  orderInfo: newQueue(options.parallel),
+  orderInfo: newQueue(options.parallel * 2), // multiply by two as it is pretty lightweight
   downloads: newQueue(options.parallel),
 };
 
@@ -73,26 +73,23 @@ process.on("SIGINT", () => {
   progress.stop();
 });
 
-async function downloadItems(filteredBundles: DownloadInfo[]) {
+function downloadItems(filteredBundles: DownloadInfo[]) {
   const downloadProgress = progress.create(filteredBundles.length, 0, {
     file: "Download Queue",
   });
-  await Promise.all(
-    filteredBundles.map((download) =>
-      downloadItem(
-        download,
-        checksums,
-        progress,
-        downloadProgress,
-        queues,
-        totals,
-      )
-    ),
-  );
-
-  await Promise.all(Object.values(queues).map((queue) => queue.done()));
-
-  await clean(filteredBundles, checksums, options, totals);
+  for (const download of filteredBundles) {
+    queues.downloads
+      .add(async () =>
+        downloadItem(
+          download,
+          checksums,
+          progress,
+          downloadProgress,
+          queues,
+          totals,
+        )
+      );
+  }
 }
 
 // Main switch case for command execution
@@ -134,13 +131,13 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.ebooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterEbooks(bundles, options, totals, progress);
-    await downloadItems(filteredBundles);
+    downloadItems(filteredBundles);
     break;
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     const filteredBundles = filterBundles(bundles, options, totals, progress);
-    await downloadItems(filteredBundles);
+    downloadItems(filteredBundles);
     break;
   }
 }

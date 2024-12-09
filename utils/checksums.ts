@@ -6,6 +6,7 @@ import { exists } from "@std/fs/exists";
 import { DownloadInfo } from "./orders.ts";
 import { StreamProgress } from "./streamProgress.ts";
 import { yellow } from "@std/fmt/colors";
+import type { MultiBar } from "cli-progress";
 
 export async function computeFileHash(
   stream: ReadableStream<Uint8Array>,
@@ -23,7 +24,7 @@ export async function computeFileHash(
 
 export async function checksum(
   file: string,
-  progress: unknown,
+  progress: MultiBar,
 ): Promise<Checksums> {
   const filePath = resolve(file);
   const { size } = await Deno.stat(filePath);
@@ -37,7 +38,7 @@ export async function checksum(
 export async function checkSignatureMatch(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
-  progress: unknown,
+  progress: MultiBar,
 ): Promise<boolean> {
   if (!(await exists(download.filePath))) return false;
 
@@ -54,7 +55,7 @@ async function getOrComputeChecksum(
   fileName: string,
   filePath: string,
   checksums: Record<string, Checksums>,
-  progress: unknown,
+  progress: MultiBar,
 ): Promise<Checksums> {
   if (checksums[fileName]?.md5 && checksums[fileName]?.sha1) {
     return checksums[fileName];
