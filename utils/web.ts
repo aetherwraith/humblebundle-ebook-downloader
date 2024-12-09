@@ -1,6 +1,7 @@
 import { userAgent } from "./constants.ts";
-import { Bundle, GameKey, Options, Totals } from "./types.ts";
+import { Bundle, GameKey, Options, Queues, Totals } from "./types.ts";
 import { writeJsonFile } from "./fileUtils.ts";
+import type { MultiBar, SingleBar } from "cli-progress";
 
 // Constants
 const BASE_URL = "https://www.humblebundle.com";
@@ -35,8 +36,8 @@ async function fetchBundleDetails(
 export async function getAllBundles(
   options: Options,
   totals: Totals,
-  queues,
-  progress,
+  queues: Queues,
+  progress: MultiBar,
 ) {
   const orderResponse = await fetch(`${BASE_URL}${ORDER_PATH}`, {
     headers: getRequestHeaders(options),
@@ -44,7 +45,9 @@ export async function getAllBundles(
   const gameKeys: GameKey[] = await orderResponse.json();
   totals.bundles = gameKeys.length;
 
-  const progressBar = progress.create(gameKeys.length, 0, { file: "Bundles" });
+  const progressBar: SingleBar = progress.create(gameKeys.length, 0, {
+    file: "Bundles",
+  });
   const bundles: Bundle[] = [];
 
   for (const gameKey of gameKeys) {

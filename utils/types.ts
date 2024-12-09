@@ -1,3 +1,5 @@
+import { Queue } from "@henrygd/queue";
+
 export interface GameKey {
   gamekey: string;
 }
@@ -64,8 +66,7 @@ export interface SubProduct {
 }
 
 // deno-lint-ignore no-empty-interface
-export interface CustomDownloadPageBoxHTMLClass {
-}
+export interface CustomDownloadPageBoxHTMLClass {}
 
 export interface DisplayItem {
   publishers: Publisher[] | null;
@@ -197,3 +198,9 @@ export interface Options extends Record<string, unknown> {
   authToken: string;
   downloadFolder: string;
 }
+
+export type Queues = {
+  fileCheck: Queue;
+  orderInfo: Queue;
+  downloads: Queue;
+};

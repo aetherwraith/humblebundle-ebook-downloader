@@ -10,6 +10,7 @@ import { yellow } from "@std/fmt/colors";
 import sanitizeFilename from "sanitize-filename";
 import { basename, resolve } from "@std/path";
 import { normalizeFormat } from "./generic.ts";
+import type { MultiBar } from "cli-progress";
 
 export interface DownloadInfo {
   date: Date;
@@ -76,7 +77,7 @@ export function filterBundles(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
-  progress: unknown,
+  progress: MultiBar,
 ) {
   progress.log(
     `${
@@ -146,9 +147,9 @@ export function filterEbooks(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
-  progress: unknown,
+  progress: MultiBar,
 ) {
-  // priority of format to download cbz -> epub -> pdf_hd -> pdf -> mobi
+  // priority of format to download cbz → epub → pdf_hd → pdf → mobi
   progress.log(
     `${yellow(bundles.length.toString())} bundles containing ebooks`,
   );

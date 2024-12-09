@@ -1,6 +1,7 @@
 import packageInfo from "../deno.json" with { type: "json" };
 import { ParseOptions } from "@std/cli/parse-args";
 import { Platform } from "./types.ts";
+import { RetryOptions } from "@std/async/retry";
 
 export const SUPPORTED_FORMATS = ["cbz", "epub", "pdf_hd", "pdf", "mobi"];
 export const optionsFileName = "options.json";
@@ -34,6 +35,7 @@ const argAlias = {
   authToken: "t",
   format: "f",
   platform: "p",
+  bundleFolders: "b",
 };
 const argCollect = ["format", "platform"];
 export const argDescriptions = {
@@ -64,3 +66,9 @@ export const MISSING_DOWNLOAD_FOLDER_ERROR =
   "Please specify download folder (--download-folder or -d)";
 export const MISSING_AUTH_TOKEN_ERROR =
   "Please specify auth token (--auth-token or -t)";
+export const retryOptions: RetryOptions = {
+  maxAttempts: 3,
+  minTimeout: 10,
+  multiplier: 2,
+  jitter: 0,
+};

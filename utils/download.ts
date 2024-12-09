@@ -1,17 +1,19 @@
 import { DownloadInfo } from "./orders.ts";
 import { checkSignatureMatch, computeFileHash } from "./checksums.ts";
-import { Checksums, Totals } from "./types.ts";
+import { Checksums, Queues, Totals } from "./types.ts";
 import { resolve } from "@std/path/resolve";
 import { StreamProgress } from "./streamProgress.ts";
 import { cyan } from "@std/fmt/colors";
 import type { MultiBar, SingleBar } from "cli-progress";
+import { retry, RetryError } from "@std/async";
+import { retryOptions } from "./constants.ts";
 
 export async function downloadItem(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
   progress: MultiBar,
   downloadProgress: SingleBar,
-  queues,
+  queues: Queues,
   totals: Totals,
 ): Promise<void> {
   if (
@@ -23,17 +25,23 @@ export async function downloadItem(
     downloadProgress.increment();
   } else {
     totals.downloads++;
-    queues.downloads.add(() =>
-      doDownload(download, progress, checksums, downloadProgress, totals)
-    ).catch((_: unknown) =>
-      downloadItem(
-        download,
-        checksums,
-        progress,
-        downloadProgress,
-        queues,
-        totals,
-      )
+
+    return retry(
+      async () =>
+        await doDownload(
+          download,
+          progress,
+          checksums,
+          downloadProgress,
+          totals,
+        ).catch((err) => {
+          if (err instanceof RetryError) {
+            progress.log("Retry error :", err.message);
+            progress.log("Error cause :", err.cause);
+            throw err;
+          }
+        }),
+      retryOptions,
     );
   }
 }
@@ -54,7 +62,7 @@ export async function doDownload(
   });
   const fileStream = saveFile.writable;
   const req = await fetch(download.url);
-  const size = Number(req.headers.get("content-length"))
+  const size = Number(req.headers.get("content-length"));
   const downloadStream = req.body?.pipeThrough(
     new StreamProgress(size, download.filePath, progress, "Downloading", cyan),
   );

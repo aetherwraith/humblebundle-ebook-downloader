@@ -4,6 +4,8 @@
     "jsr:@henrygd/queue@^1.0.7": "1.0.7",
     "jsr:@opentf/std@0.12": "0.12.0",
     "jsr:@std/assert@^1.0.9": "1.0.9",
+    "jsr:@std/async@*": "1.0.9",
+    "jsr:@std/async@^1.0.9": "1.0.9",
     "jsr:@std/cli@^1.0.8": "1.0.8",
     "jsr:@std/collections@^1.0.9": "1.0.9",
     "jsr:@std/crypto@^1.0.3": "1.0.3",
@@ -30,6 +32,9 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
+    },
+    "@std/async@1.0.9": {
+      "integrity": "c6472fd0623b3f3daae023cdf7ca5535e1b721dfbf376562c0c12b3fb4867f91"
     },
     "@std/cli@1.0.8": {
       "integrity": "3762d8dc9a373715c08d871c38d45e637b25266f013a1d0bbe560bca409de94e"
@@ -142,6 +147,7 @@
       "jsr:@henrygd/queue@^1.0.7",
       "jsr:@opentf/std@0.12",
       "jsr:@std/assert@^1.0.9",
+      "jsr:@std/async@^1.0.9",
       "jsr:@std/cli@^1.0.8",
       "jsr:@std/collections@^1.0.9",
       "jsr:@std/crypto@^1.0.3",
