@@ -1,5 +1,4 @@
 import { Queue } from "@henrygd/queue";
-import { DownloadInfo } from "./orders.ts";
 
 export interface GameKey {
   gamekey: string;

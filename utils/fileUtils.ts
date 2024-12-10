@@ -76,7 +76,6 @@ export async function clean(
   totals: Totals,
 ) {
   log.info("Removing files...");
-  const existingFiles = [];
   for await (const file of walkExistingFiles(options)) {
     if (
       !filteredBundles.some((download) =>
@@ -91,11 +90,6 @@ export async function clean(
       await Deno.remove(file.path);
     }
   }
-  await writeJsonFile(
-    options.downloadFolder,
-    "existingFiles.json",
-    existingFiles,
-  );
   log.info("Removing checksums from cache");
   Object.keys(checksums).forEach((fileName) => {
     if (
