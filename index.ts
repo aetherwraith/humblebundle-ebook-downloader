@@ -39,7 +39,7 @@ const totals: Totals = {
   removedFiles: 0,
   removedChecksums: 0,
   downloads: 0,
-  doneDownloads: [],
+  doneDownloads: 0,
 };
 
 // Setup progress bar
