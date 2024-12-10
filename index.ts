@@ -9,6 +9,7 @@ import {
   clean,
   loadChecksumCache,
   walkExistingFiles,
+  writeJsonFile,
 } from "./utils/fileUtils.ts";
 import { newQueue } from "@henrygd/queue";
 import { checksum } from "./utils/checksums.ts";
@@ -16,7 +17,7 @@ import type { MultiBar } from "cli-progress";
 import cliProgress from "cli-progress";
 import process from "node:process";
 import { getAllBundles } from "./utils/web.ts";
-import { filterBundles, filterEbooks } from "./utils/orders.ts";
+import { DownloadInfo, filterBundles, filterEbooks } from "./utils/orders.ts";
 import { Checksums, Options, Totals } from "./utils/types.ts";
 import { downloadItems } from "./utils/download.ts";
 
@@ -69,6 +70,8 @@ process.on("SIGINT", () => {
   progress.stop();
 });
 
+let filteredBundles: DownloadInfo[] = [];
+
 // Main switch case for command execution
 switch (options.command?.toLowerCase()) {
   case COMMANDS.checksums: {
@@ -95,32 +98,38 @@ switch (options.command?.toLowerCase()) {
   }
   case COMMANDS.cleanup: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    const filteredBundles = filterBundles(bundles, options, totals, progress);
-    await clean(filteredBundles, checksums, options, totals);
+    filteredBundles = filterBundles(bundles, options, totals, progress);
+
     break;
   }
   case COMMANDS.cleanupEbooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    const filteredBundles = filterEbooks(bundles, options, totals, progress);
-    await clean(filteredBundles, checksums, options, totals);
+    filteredBundles = filterEbooks(bundles, options, totals, progress);
+
     break;
   }
   case COMMANDS.ebooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    const filteredBundles = filterEbooks(bundles, options, totals, progress);
+    filteredBundles = filterEbooks(bundles, options, totals, progress);
     downloadItems(filteredBundles, progress, checksums, queues, totals);
     break;
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    const filteredBundles = filterBundles(bundles, options, totals, progress);
+    filteredBundles = filterBundles(bundles, options, totals, progress);
     downloadItems(filteredBundles, progress, checksums, queues, totals);
     break;
   }
 }
 
 // Wait for queues to complete
+await writeJsonFile(
+  options.downloadFolder,
+  "filteredBundles.json",
+  filteredBundles,
+);
 await Promise.all(Object.values(queues).map((queue) => queue.done()));
 progress.stop();
+await clean(filteredBundles, checksums, options, totals);
 
 log.info(totals);
