@@ -1,3 +1,4 @@
+import { isEql } from "@opentf/std";
 import { green } from "@std/fmt/colors";
 import { walk } from "@std/fs/walk";
 import * as log from "@std/log";
@@ -75,16 +76,36 @@ export async function clean(
   totals: Totals,
 ) {
   log.info("Removing files...");
+  const existingFiles = [];
   for await (const file of walkExistingFiles(options)) {
-    if (!filteredBundles.some((download) => file.path === download.filePath)) {
+    if (
+      !filteredBundles.some((download) =>
+        isEql(
+          file.path.toLocaleLowerCase(),
+          download.filePath.toLocaleLowerCase(),
+        )
+      )
+    ) {
       log.info(`Deleting extra file: ${file.path}`);
       totals.removedFiles += 1;
       await Deno.remove(file.path);
     }
   }
+  await writeJsonFile(
+    options.downloadFolder,
+    "existingFiles.json",
+    existingFiles,
+  );
   log.info("Removing checksums from cache");
   Object.keys(checksums).forEach((fileName) => {
-    if (!filteredBundles.some((download) => fileName === download.fileName)) {
+    if (
+      !filteredBundles.some((download) =>
+        isEql(
+          fileName.toLocaleLowerCase(),
+          download.fileName.toLocaleLowerCase(),
+        )
+      )
+    ) {
       log.info(`Removing checksum from cache: ${fileName}`);
       totals.removedChecksums += 1;
       delete checksums[fileName];
