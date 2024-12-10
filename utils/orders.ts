@@ -1,3 +1,4 @@
+import { isEql } from "@opentf/std";
 import { yellow } from "@std/fmt/colors";
 import { basename, resolve } from "@std/path";
 import type { MultiBar } from "cli-progress";
@@ -69,11 +70,17 @@ function isDuplicateDownload(
     options.dedup &&
     downloads.some(
       (elem) =>
-        elem.fileName === downloadInfo.fileName ||
+        isEql(
+          elem.fileName.toLocaleLowerCase(),
+          downloadInfo.fileName.toLocaleLowerCase(),
+        ) ||
         (struct.sha1 &&
-          struct.sha1 === elem.sha1 &&
+          isEql(
+            struct.sha1.toLocaleLowerCase(),
+            elem.sha1?.toLocaleLowerCase(),
+          ) &&
           struct.md5 &&
-          struct.md5 === elem.md5),
+          isEql(struct.md5.toLocaleLowerCase(), elem.md5?.toLocaleLowerCase())),
     )
   );
 }
@@ -119,22 +126,31 @@ export function filterBundles(
 
               if (!isDuplicate) {
                 if (
-                  !downloads.some(
-                    (elem) => elem.filePath === downloadInfo.filePath,
+                  !downloads.some((elem) =>
+                    isEql(
+                      elem.filePath.toLocaleLowerCase(),
+                      downloadInfo.filePath.toLocaleLowerCase(),
+                    )
                   )
                 ) {
                   downloads.push(downloadInfo);
                 } else {
-                  const duplicate = downloads.find(
-                    (elem) => elem.filePath === downloadInfo.filePath,
+                  const duplicate = downloads.find((elem) =>
+                    isEql(
+                      elem.filePath.toLocaleLowerCase(),
+                      downloadInfo.filePath.toLocaleLowerCase(),
+                    )
                   );
                   progress.log(
                     `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
                   );
                 }
               } else {
-                const duplicate = downloads.find(
-                  (elem) => elem.fileName === downloadInfo.fileName,
+                const duplicate = downloads.find((elem) =>
+                  isEql(
+                    elem.fileName.toLocaleLowerCase(),
+                    downloadInfo.fileName.toLocaleLowerCase(),
+                  )
                 );
                 progress.log(
                   `Potential bob purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
@@ -164,8 +180,8 @@ export function filterEbooks(
   bundles.forEach((bundle) => {
     let date = new Date(bundle.created);
     bundle.subproducts.forEach((subProduct) => {
-      const filteredDownloads = subProduct.downloads.filter(
-        (elem) => elem.platform === Platform.Ebook,
+      const filteredDownloads = subProduct.downloads.filter((elem) =>
+        isEql(elem.platform, Platform.Ebook)
       );
       options.format.forEach((format) => {
         filteredDownloads.forEach((download) =>
@@ -173,7 +189,7 @@ export function filterEbooks(
             if (
               struct.name &&
               struct.url &&
-              normalizeFormat(struct.name) === format
+              isEql(normalizeFormat(struct.name), format)
             ) {
               totals.preFilteredDownloads++;
               const uploaded_at = struct.uploaded_at
@@ -183,17 +199,28 @@ export function filterEbooks(
               // TODO: check hash matches too
               let existing;
               if (options.dedup) {
-                existing = downloads.find(
-                  (elem) => elem.machineName === subProduct.machine_name,
+                existing = downloads.find((elem) =>
+                  isEql(
+                    elem.machineName.toLocaleLowerCase(),
+                    subProduct.machine_name.toLocaleLowerCase(),
+                  )
                 );
               }
               if (
                 !existing ||
-                (date > existing.date && struct.name === existing.structName)
+                (date > existing.date &&
+                  isEql(
+                    struct.name.toLocaleLowerCase(),
+                    existing.structName.toLocaleLowerCase(),
+                  ))
               ) {
                 if (existing) {
                   downloads = downloads.filter(
-                    (elem) => elem.machineName !== existing.machineName,
+                    (elem) =>
+                      !isEql(
+                        elem.machineName.toLocaleLowerCase(),
+                        existing.machineName.toLocaleLowerCase(),
+                      ),
                   );
                 }
 
@@ -208,8 +235,11 @@ export function filterEbooks(
                 );
 
                 if (
-                  !downloads.some(
-                    (elem) => elem.filePath === downloadInfo.filePath,
+                  !downloads.some((elem) =>
+                    isEql(
+                      elem.filePath.toLocaleLowerCase(),
+                      downloadInfo.filePath.toLocaleLowerCase(),
+                    )
                   )
                 ) {
                   downloads.push(downloadInfo);

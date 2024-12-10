@@ -1,25 +1,23 @@
-#!/usr/bin/env -S deno run --allow-env
-
+import { newQueue } from "@henrygd/queue";
 import { parseArgs } from "@std/cli/parse-args";
-import * as log from "@std/log";
-import { COMMANDS, parseOptions } from "./utils/constants.ts";
-import { checkOptions } from "./utils/options.ts";
 import { WalkEntry } from "@std/fs/walk";
+import * as log from "@std/log";
+import type { MultiBar } from "cli-progress";
+import cliProgress from "cli-progress";
+import process from "node:process";
+import { checksum } from "./utils/checksums.ts";
+import { COMMANDS, parseOptions } from "./utils/constants.ts";
+import { downloadItems } from "./utils/download.ts";
 import {
   clean,
   loadChecksumCache,
   walkExistingFiles,
   writeJsonFile,
 } from "./utils/fileUtils.ts";
-import { newQueue } from "@henrygd/queue";
-import { checksum } from "./utils/checksums.ts";
-import type { MultiBar } from "cli-progress";
-import cliProgress from "cli-progress";
-import process from "node:process";
-import { getAllBundles } from "./utils/web.ts";
+import { checkOptions } from "./utils/options.ts";
 import { DownloadInfo, filterBundles, filterEbooks } from "./utils/orders.ts";
 import { Checksums, Options, Totals } from "./utils/types.ts";
-import { downloadItems } from "./utils/download.ts";
+import { getAllBundles } from "./utils/web.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -41,7 +39,7 @@ const totals: Totals = {
   removedFiles: 0,
   removedChecksums: 0,
   downloads: 0,
-  doneDownloads: 0,
+  doneDownloads: [],
 };
 
 // Setup progress bar
@@ -99,13 +97,11 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.cleanup: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     filteredBundles = filterBundles(bundles, options, totals, progress);
-
     break;
   }
   case COMMANDS.cleanupEbooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     filteredBundles = filterEbooks(bundles, options, totals, progress);
-
     break;
   }
   case COMMANDS.ebooks: {

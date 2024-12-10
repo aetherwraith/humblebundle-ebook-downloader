@@ -92,7 +92,10 @@ function handleOptionDifferences(
   optionsToSave: Options,
 ): void {
   optionsToSave[key] = options[key];
-  if (savedOptions[key] && !isEql(savedOptions[key], options[key])) {
+  if (
+    Object.hasOwn(savedOptions, key) &&
+    !isEql(savedOptions[key], options[key])
+  ) {
     const useNewValue = promptOptionChange(
       key,
       savedOptions[key],
@@ -125,11 +128,9 @@ function optionError(message: string): void {
 function checkArrayOption(values: string[], validValues: string[]): void {
   if (!values.every((value) => validValues.includes(value))) {
     optionError(
-      `${values} contains one or more invalid formats. Supported formats are ${
-        validValues.join(
-          ",",
-        )
-      }`,
+      `${values} contains one or more invalid formats. Supported formats are ${validValues.join(
+        ",",
+      )}`,
     );
   }
 }

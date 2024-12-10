@@ -1,3 +1,4 @@
+import { isEql } from "@opentf/std";
 import { crypto } from "@std/crypto";
 import { encodeHex } from "@std/encoding/hex";
 import { yellow } from "@std/fmt/colors";
@@ -6,7 +7,7 @@ import { resolve } from "@std/path";
 import type { MultiBar } from "cli-progress";
 import { DownloadInfo } from "./orders.ts";
 import { StreamProgress } from "./streamProgress.ts";
-import { Checksums } from "./types.ts";
+import { Checksums, Totals } from "./types.ts";
 
 export async function computeFileHash(
   stream: ReadableStream<Uint8Array>,
@@ -72,8 +73,13 @@ async function getOrComputeChecksum(
 
 function isHashVerified(download: DownloadInfo, hash: Checksums): boolean {
   return (
-    (download.sha1 && download.sha1 === hash.sha1) ||
-    (download.md5 && download.md5 === hash.md5) ||
+    (download.sha1 &&
+      isEql(
+        download.sha1.toLocaleLowerCase(),
+        hash.sha1.toLocaleLowerCase(),
+      )) ||
+    (download.md5 &&
+      isEql(download.md5.toLocaleLowerCase(), hash.md5.toLocaleLowerCase())) ||
     false
   );
 }

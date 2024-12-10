@@ -17,24 +17,15 @@ export async function downloadItem(
   totals: Totals,
 ): Promise<void> {
   if (
-    await queues.fileCheck.add(() =>
-      checkSignatureMatch(download, checksums, progress, totals)
-    )
+    !(await queues.fileCheck.add(() =>
+      checkSignatureMatch(download, checksums, progress, totals),
+    ))
   ) {
-    totals.doneDownloads++;
-    downloadProgress.increment();
-  } else {
     totals.downloads++;
 
-    return retry(
+    await retry(
       async () =>
-        await doDownload(
-          download,
-          progress,
-          checksums,
-          downloadProgress,
-          totals,
-        ).catch((err) => {
+        await doDownload(download, progress, checksums).catch((err) => {
           if (err instanceof RetryError) {
             progress.log("Retry error :", err.message);
             progress.log("Error cause :", err.cause);
@@ -44,14 +35,14 @@ export async function downloadItem(
       retryOptions,
     );
   }
+  totals.doneDownloads++;
+  downloadProgress.increment();
 }
 
 export async function doDownload(
   download: DownloadInfo,
   progress: MultiBar,
   checksums: Record<string, Checksums>,
-  downloadProgress: SingleBar,
-  totals: Totals,
 ) {
   const filePath = resolve(download.filePath);
   await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
@@ -72,8 +63,6 @@ export async function doDownload(
     writeStream.pipeTo(fileStream),
   ]);
   checksums[download.fileName] = hash;
-  totals.doneDownloads++;
-  downloadProgress.increment();
 }
 
 export function downloadItems(
@@ -95,7 +84,7 @@ export function downloadItems(
         downloadProgress,
         queues,
         totals,
-      )
+      ),
     );
   }
 }
