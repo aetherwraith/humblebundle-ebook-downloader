@@ -128,9 +128,11 @@ function optionError(message: string): void {
 function checkArrayOption(values: string[], validValues: string[]): void {
   if (!values.every((value) => validValues.includes(value))) {
     optionError(
-      `${values} contains one or more invalid formats. Supported formats are ${validValues.join(
-        ",",
-      )}`,
+      `${values} contains one or more invalid formats. Supported formats are ${
+        validValues.join(
+          ",",
+        )
+      }`,
     );
   }
 }

@@ -4,7 +4,6 @@ import { WalkEntry } from "@std/fs/walk";
 import * as log from "@std/log";
 import type { MultiBar } from "cli-progress";
 import cliProgress from "cli-progress";
-import process from "node:process";
 import { checksum } from "./utils/checksums.ts";
 import { COMMANDS, parseOptions } from "./utils/constants.ts";
 import { downloadItems } from "./utils/download.ts";
@@ -61,7 +60,7 @@ const checksums: Record<string, Checksums> = await loadChecksumCache(options);
 totals.checksumsLoaded = Object.keys(checksums).length;
 
 // Handle process signals
-process.on("SIGINT", () => {
+Deno.addSignalListener("SIGINT", () => {
   for (const queue of Object.values(queues)) {
     queue.clear();
   }

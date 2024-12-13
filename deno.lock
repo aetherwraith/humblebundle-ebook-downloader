@@ -17,7 +17,7 @@
     "jsr:@std/log@~0.224.11": "0.224.11",
     "jsr:@std/path@^1.0.8": "1.0.8",
     "npm:@types/cli-progress@^3.11.6": "3.11.6",
-    "npm:@types/node@^22.10.1": "22.10.1",
+    "npm:@types/node@^22.10.2": "22.10.2",
     "npm:cli-progress@^3.12.0": "3.12.0"
   },
   "jsr": {
@@ -82,8 +82,8 @@
         "@types/node@22.5.4"
       ]
     },
-    "@types/node@22.10.1": {
-      "integrity": "sha512-qKgsUwfHZV2WCWLAnVP1JqnpE6Im6h3Y0+fYgMTasNQ7V++CBX5OT1as0g0f+OyubbFqhf6XVNIsmN4IIhEgGQ==",
+    "@types/node@22.10.2": {
+      "integrity": "sha512-Xxr6BBRCAOQixvonOye19wnzyDiUtTeqldOOmj3CkeblonbccA12PFwlufvRdrpjXxqnmUaeiU5EOA+7s5diUQ==",
       "dependencies": [
         "undici-types@6.20.0"
       ]
@@ -158,7 +158,7 @@
       "jsr:@std/log@~0.224.11",
       "jsr:@std/path@^1.0.8",
       "npm:@types/cli-progress@^3.11.6",
-      "npm:@types/node@^22.10.1",
+      "npm:@types/node@^22.10.2",
       "npm:cli-progress@^3.12.0"
     ]
   }

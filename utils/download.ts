@@ -17,9 +17,7 @@ export async function downloadItem(
   totals: Totals,
 ): Promise<void> {
   if (
-    !(await queues.fileCheck.add(() =>
-      checkSignatureMatch(download, checksums, progress, totals),
-    ))
+    !(await checkSignatureMatch(download, checksums, progress, totals))
   ) {
     totals.downloads++;
 
@@ -84,7 +82,7 @@ export function downloadItems(
         downloadProgress,
         queues,
         totals,
-      ),
+      )
     );
   }
 }

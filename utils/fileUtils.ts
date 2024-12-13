@@ -3,7 +3,6 @@ import { green } from "@std/fmt/colors";
 import { walk } from "@std/fs/walk";
 import * as log from "@std/log";
 import { resolve } from "@std/path";
-import process from "node:process";
 import sanitizeFilename from "sanitize-filename";
 import { cacheFileName } from "./constants.ts";
 import { DownloadInfo } from "./orders.ts";
@@ -47,13 +46,30 @@ export async function loadChecksumCache(options: Options) {
     cacheFileName,
   );
 
-  process.on("SIGINT", () => {
+  Deno.addSignalListener("SIGINT", () => {
+    console.log("SIGINT");
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   });
 
-  process.on("exit", () => {
+  Deno.addSignalListener("SIGABRT", () => {
+    console.log("SIGABRT");
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   });
+
+  Deno.addSignalListener("SIGQUIT", () => {
+    console.log("SIGQUIT");
+    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
+  });
+
+  Deno.addSignalListener("SIGTERM", () => {
+    console.log("SIGTERM");
+    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
+  });
+
+  globalThis.onunload = () => {
+    console.log("onunload");
+    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
+  };
 
   log.info(
     `${green(Object.keys(checksumCache).length.toString())} checksums loaded`,
