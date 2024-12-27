@@ -5,9 +5,10 @@ import { yellow } from "@std/fmt/colors";
 import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
 import type { MultiBar } from "cli-progress";
-import { DownloadInfo } from "./orders.ts";
 import { StreamProgress } from "./streamProgress.ts";
-import { Checksums, Totals } from "./types.ts";
+
+import { DownloadInfo, Totals } from "../types/general.ts";
+import { Checksums } from "../types/bundle.ts";
 
 export async function computeFileHash(
   stream: ReadableStream<Uint8Array>,

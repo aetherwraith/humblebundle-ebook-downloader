@@ -5,8 +5,9 @@ import * as log from "@std/log";
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
 import { cacheFileName } from "./constants.ts";
-import { DownloadInfo } from "./orders.ts";
-import { Checksums, Options, Totals } from "./types.ts";
+
+import { DownloadInfo, Options, Totals } from "../types/general.ts";
+import { Checksums } from "../types/bundle.ts";
 
 export async function readJsonFile(folder: string, file: string) {
   const filePath = resolve(folder, sanitizeFilename(file));

@@ -7,26 +7,10 @@ import { normalizeFormat } from "./generic.ts";
 import {
   Bundle,
   DownloadStruct,
-  Options,
   Platform,
   SubProduct,
-  Totals,
-} from "./types.ts";
-
-export interface DownloadInfo {
-  date: Date;
-  bundle: string;
-  name: string;
-  fileName: string;
-  downloadPath: string;
-  filePath: string;
-  url: URL;
-  sha1?: string;
-  md5?: string;
-  machineName: string;
-  structName: string;
-  file_size?: number;
-}
+} from "../types/bundle.ts";
+import { DownloadInfo, Options, Totals } from "../types/general.ts";
 
 function createDownloadInfo(
   bundle: Bundle,

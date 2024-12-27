@@ -1,7 +1,7 @@
 import { RetryOptions } from "@std/async/retry";
 import { ParseOptions } from "@std/cli/parse-args";
 import packageInfo from "../deno.json" with { type: "json" };
-import { Platform } from "./types.ts";
+import { Platform } from "../types/bundle.ts";
 
 export const SUPPORTED_FORMATS = ["cbz", "epub", "pdf_hd", "pdf", "mobi"];
 export const optionsFileName = "options.json";

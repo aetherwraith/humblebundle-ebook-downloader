@@ -1,7 +1,10 @@
 import type { MultiBar, SingleBar } from "cli-progress";
 import { userAgent } from "./constants.ts";
 import { writeJsonFile } from "./fileUtils.ts";
-import { Bundle, GameKey, Options, Queues, Totals } from "./types.ts";
+
+import { Options, Queues, Totals } from "../types/general.ts";
+import { Trove } from "../types/trove.ts";
+import { Bundle, GameKey } from "../types/bundle.ts";
 
 // Constants
 const BASE_URL = "https://www.humblebundle.com";
@@ -71,4 +74,38 @@ export async function getAllBundles(
   return bundles.sort(
     (a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf(),
   );
+}
+
+export async function getAllTroves(options: Options) {
+  const troves: Trove[] = [];
+  let page = 0;
+  let done = false;
+  while (!done) {
+    const troveResponse = await fetch(
+      `${BASE_URL}/client/catalog?index=${page}`,
+      { headers: getRequestHeaders(options) },
+    );
+    const troveData = await troveResponse.json();
+    if (troveData.length) {
+      page += 1;
+      troveData.forEach((trove: Trove) => troves.push(trove));
+    } else {
+      done = true;
+    }
+  }
+
+  return troves;
+}
+
+export async function getTroveURL(
+  machine_name: string,
+  web: string,
+  options: Options,
+) {
+  const response = await fetch(
+    `${BASE_URL}/api/v1/user/download/sign?machine_name=${machine_name}&filename=${web}`,
+    { headers: getRequestHeaders(options), method: "POST" },
+  );
+  const url = await response.json();
+  return new URL(url.signed_url);
 }
