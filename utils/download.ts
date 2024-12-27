@@ -4,16 +4,16 @@ import { resolve } from "@std/path/resolve";
 import type { MultiBar, SingleBar } from "cli-progress";
 import { checkSignatureMatch, computeFileHash } from "./checksums.ts";
 import { retryOptions } from "./constants.ts";
-import { DownloadInfo } from "./orders.ts";
 import { StreamProgress } from "./streamProgress.ts";
-import { Checksums, Queues, Totals } from "./types.ts";
+
+import { DownloadInfo, Queues, Totals } from "../types/general.ts";
+import { Checksums } from "../types/bundle.ts";
 
 export async function downloadItem(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
   progress: MultiBar,
   downloadProgress: SingleBar,
-  queues: Queues,
   totals: Totals,
 ): Promise<void> {
   if (
@@ -74,13 +74,12 @@ export function downloadItems(
     file: "Download Queue",
   });
   for (const download of filteredBundles) {
-    queues.downloads.add(async () =>
+    queues.downloads.add(() =>
       downloadItem(
         download,
         checksums,
         progress,
         downloadProgress,
-        queues,
         totals,
       )
     );

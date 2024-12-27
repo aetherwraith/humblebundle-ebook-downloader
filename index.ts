@@ -14,9 +14,12 @@ import {
   writeJsonFile,
 } from "./utils/fileUtils.ts";
 import { checkOptions } from "./utils/options.ts";
-import { DownloadInfo, filterBundles, filterEbooks } from "./utils/orders.ts";
-import { Checksums, Options, Totals } from "./utils/types.ts";
-import { getAllBundles } from "./utils/web.ts";
+import { filterBundles, filterEbooks } from "./utils/orders.ts";
+
+import { getAllBundles, getAllTroves } from "./utils/web.ts";
+import { DownloadInfo, Options, Totals } from "./types/general.ts";
+import { Checksums } from "./types/bundle.ts";
+import { filterTroves } from "./utils/troves.ts";
 
 // Parse and check options
 const options: Options = parseArgs(Deno.args, parseOptions);
@@ -114,6 +117,18 @@ switch (options.command?.toLowerCase()) {
     filteredBundles = filterBundles(bundles, options, totals, progress);
     downloadItems(filteredBundles, progress, checksums, queues, totals);
     break;
+  }
+  case COMMANDS.trove: {
+    const troves = await getAllTroves(options);
+    await writeJsonFile(options.downloadFolder, "troves.json", troves);
+    filteredBundles = await filterTroves(
+      troves,
+      options,
+      totals,
+      progress,
+      queues,
+    );
+    downloadItems(filteredBundles, progress, checksums, queues, totals);
   }
 }
 

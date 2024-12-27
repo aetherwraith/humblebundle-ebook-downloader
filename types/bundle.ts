@@ -1,5 +1,3 @@
-import { Queue } from "@henrygd/queue";
-
 export interface GameKey {
   gamekey: string;
 }
@@ -174,33 +172,3 @@ export interface Payee {
   human_name: string;
   machine_name: string;
 }
-
-export interface Totals {
-  bundles: number;
-  checksums: number;
-  checksumsLoaded: number;
-  preFilteredDownloads: number;
-  filteredDownloads: number;
-  removedFiles: number;
-  removedChecksums: number;
-  downloads: number;
-  doneDownloads: number;
-}
-
-export interface Options extends Record<string, unknown> {
-  _?: string[];
-  dedup: boolean;
-  bundleFolders: boolean;
-  parallel: number;
-  format: string[];
-  platform: string[];
-  command?: string;
-  authToken: string;
-  downloadFolder: string;
-}
-
-export type Queues = {
-  fileCheck: Queue;
-  orderInfo: Queue;
-  downloads: Queue;
-};

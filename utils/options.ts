@@ -17,7 +17,10 @@ import {
   SUPPORTED_FORMATS,
 } from "./constants.ts";
 import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
-import { Options, Platform } from "./types.ts";
+
+import { Options } from "../types/general.ts";
+import { Platform } from "../types/bundle.ts";
+import { TrovePlatform } from "../types/trove.ts";
 
 export async function checkOptions(options: Options) {
   validateInitialOptions(options);
@@ -76,7 +79,11 @@ function processOptions(
         checkArrayOption(options[key], SUPPORTED_FORMATS);
         break;
       case "platform":
-        checkArrayOption(options[key], Object.values(Platform));
+        if (options.command === COMMANDS.trove) {
+          checkArrayOption(options[key], Object.values(TrovePlatform));
+        } else {
+          checkArrayOption(options[key], Object.values(Platform));
+        }
         break;
     }
     if (!argNoSave.includes(key)) {
@@ -128,7 +135,7 @@ function optionError(message: string): void {
 function checkArrayOption(values: string[], validValues: string[]): void {
   if (!values.every((value) => validValues.includes(value))) {
     optionError(
-      `${values} contains one or more invalid formats. Supported formats are ${
+      `${values} contains one or more invalid value. Supported values are ${
         validValues.join(
           ",",
         )
