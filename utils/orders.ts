@@ -1,6 +1,6 @@
 import { isEql } from "@opentf/std";
 import { yellow } from "@std/fmt/colors";
-import { basename, resolve } from "@std/path";
+import { basename, extname, resolve } from "@std/path";
 import type { MultiBar } from "cli-progress";
 import sanitizeFilename from "sanitize-filename";
 import { normalizeFormat } from "./generic.ts";
@@ -20,11 +20,11 @@ function createDownloadInfo(
   date: Date,
 ): DownloadInfo {
   const url = new URL(struct.url.web);
-  const fileName = sanitizeFilename(basename(url.pathname));
+  const fileName = sanitizeFilename(options.humanFileNames ? `${subProduct.human_name}${extname(basename(url.pathname))}` : basename(url.pathname));
   const downloadPath = resolve(
     options.downloadFolder,
     options.bundleFolders ? sanitizeFilename(bundle.product.human_name) : "",
-    sanitizeFilename(subProduct.human_name),
+    options.productFolders ? sanitizeFilename(subProduct.human_name) : "",
   );
   const filePath = resolve(downloadPath, fileName);
 

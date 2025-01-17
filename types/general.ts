@@ -16,6 +16,8 @@ export interface Options extends Record<string, unknown> {
   _?: string[];
   dedup: boolean;
   bundleFolders: boolean;
+  productFolders: boolean;
+  humanFileNames: boolean;
   parallel: number;
   format: string[];
   platform: string[];
