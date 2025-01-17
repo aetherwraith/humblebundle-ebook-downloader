@@ -28,7 +28,7 @@ await checkOptions(options);
 // Initialize the queues
 const queues = {
   fileCheck: newQueue(options.parallel),
-  orderInfo: newQueue(options.parallel * 2), // multiply by two as it is pretty lightweight
+  orderInfo: newQueue(32), // multiply by two as it is pretty lightweight
   downloads: newQueue(options.parallel),
 };
 

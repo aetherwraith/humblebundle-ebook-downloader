@@ -20,10 +20,14 @@ export const COMMANDS = {
   trove: "trove",
 };
 
-const argBooleans = ["dedup", "bundleFolders"];
+const argBooleans = ["dedup", "bundleFolders",
+"productFolders",
+"humanFileNames"];
 const argDefaults = {
   dedup: true,
   bundleFolders: true,
+  productFolders: true,
+  humanFileNames: false,
   parallel: 1,
   format: SUPPORTED_FORMATS,
   platform: Object.values(Platform),
@@ -41,6 +45,8 @@ const argCollect = ["format", "platform"];
 export const argDescriptions = {
   dedup: "Dedup the downloads",
   bundleFolders: "Arrange downloads in bundle folders",
+  productFolders: "Individual product folders",
+  humanFileNames: "Use human readable file names",
   downloadFolder: "Download folder",
   parallel: "Parallel limit",
   authToken: "Authentication cookie from your browser (_simpleauth_sess)",
