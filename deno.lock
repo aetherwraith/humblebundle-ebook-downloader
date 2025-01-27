@@ -3,21 +3,21 @@
   "specifiers": {
     "jsr:@henrygd/queue@^1.0.7": "1.0.7",
     "jsr:@opentf/std@0.12": "0.12.0",
-    "jsr:@std/assert@^1.0.10": "1.0.10",
-    "jsr:@std/async@*": "1.0.9",
-    "jsr:@std/async@^1.0.9": "1.0.9",
-    "jsr:@std/cli@^1.0.10": "1.0.10",
-    "jsr:@std/collections@^1.0.9": "1.0.9",
+    "jsr:@std/assert@^1.0.11": "1.0.11",
+    "jsr:@std/async@^1.0.10": "1.0.10",
+    "jsr:@std/cli@^1.0.11": "1.0.11",
+    "jsr:@std/collections@^1.0.10": "1.0.10",
     "jsr:@std/crypto@^1.0.3": "1.0.3",
     "jsr:@std/encoding@^1.0.6": "1.0.6",
     "jsr:@std/fmt@^1.0.4": "1.0.4",
-    "jsr:@std/fs@^1.0.9": "1.0.9",
+    "jsr:@std/fs@^1.0.10": "1.0.10",
+    "jsr:@std/fs@^1.0.9": "1.0.10",
     "jsr:@std/internal@^1.0.5": "1.0.5",
     "jsr:@std/io@0.225": "0.225.0",
     "jsr:@std/log@~0.224.13": "0.224.13",
     "jsr:@std/path@^1.0.8": "1.0.8",
     "npm:@types/cli-progress@^3.11.6": "3.11.6",
-    "npm:@types/node@^22.10.7": "22.10.7",
+    "npm:@types/node@^22.10.10": "22.10.10",
     "npm:cli-progress@^3.12.0": "3.12.0"
   },
   "jsr": {
@@ -27,20 +27,20 @@
     "@opentf/std@0.12.0": {
       "integrity": "a78ec5cee300c4379dda0e92458ae372a9e871daef7b2aa2a53cb2314a276980"
     },
-    "@std/assert@1.0.10": {
-      "integrity": "59b5cbac5bd55459a19045d95cc7c2ff787b4f8527c0dd195078ff6f9481fbb3",
+    "@std/assert@1.0.11": {
+      "integrity": "2461ef3c368fe88bc60e186e7744a93112f16fd110022e113a0849e94d1c83c1",
       "dependencies": [
         "jsr:@std/internal"
       ]
     },
-    "@std/async@1.0.9": {
-      "integrity": "c6472fd0623b3f3daae023cdf7ca5535e1b721dfbf376562c0c12b3fb4867f91"
+    "@std/async@1.0.10": {
+      "integrity": "2ff1b1c7d33d1416159989b0f69e59ec7ee8cb58510df01e454def2108b3dbec"
     },
-    "@std/cli@1.0.10": {
-      "integrity": "d047f6f4954a5c2827fe0963765ddd3d8b6cc7b7518682842645b95f571539dc"
+    "@std/cli@1.0.11": {
+      "integrity": "ec219619fdcd31bcf0d8e53bee1e2706ec9a02f70255365a094f69755dadd340"
     },
-    "@std/collections@1.0.9": {
-      "integrity": "4f58104ead08a04a2199374247f07befe50ba01d9cca8cbb23ab9a0419921e71"
+    "@std/collections@1.0.10": {
+      "integrity": "903af106a3d92970d74e20f7ebff77d9658af9bef4403f1dc42a7801c0575899"
     },
     "@std/crypto@1.0.3": {
       "integrity": "a2a32f51ddef632d299e3879cd027c630dcd4d1d9a5285d6e6788072f4e51e7f"
@@ -63,6 +63,12 @@
         "jsr:@std/path"
       ]
     },
+    "@std/fs@1.0.10": {
+      "integrity": "bf041f9d7a0a460817f0421be8946d0e06011b3433e6c83a215628de5e3c7c2c",
+      "dependencies": [
+        "jsr:@std/path"
+      ]
+    },
     "@std/internal@1.0.5": {
       "integrity": "54a546004f769c1ac9e025abd15a76b6671ddc9687e2313b67376125650dc7ba"
     },
@@ -73,7 +79,7 @@
       "integrity": "f04d82f676c9eb4306194ca166d296d9f1456fe4b7edf2a404a0d55c94d31df7",
       "dependencies": [
         "jsr:@std/fmt",
-        "jsr:@std/fs",
+        "jsr:@std/fs@^1.0.9",
         "jsr:@std/io"
       ]
     },
@@ -88,8 +94,8 @@
         "@types/node@22.5.4"
       ]
     },
-    "@types/node@22.10.7": {
-      "integrity": "sha512-V09KvXxFiutGp6B7XkpaDXlNadZxrzajcY50EuoLIpQ6WWYCSvf19lVIazzfIzQvhUN2HjX12spLojTnhuKlGg==",
+    "@types/node@22.10.10": {
+      "integrity": "sha512-X47y/mPNzxviAGY5TcYPtYL8JsY3kAq2n8fMmKoRCxq/c4v4pyGNCzM2R6+M5/umG4ZfHuT+sgqDYqWc9rJ6ww==",
       "dependencies": [
         "undici-types@6.20.0"
       ]
@@ -152,19 +158,19 @@
     "dependencies": [
       "jsr:@henrygd/queue@^1.0.7",
       "jsr:@opentf/std@0.12",
-      "jsr:@std/assert@^1.0.10",
-      "jsr:@std/async@^1.0.9",
-      "jsr:@std/cli@^1.0.10",
-      "jsr:@std/collections@^1.0.9",
+      "jsr:@std/assert@^1.0.11",
+      "jsr:@std/async@^1.0.10",
+      "jsr:@std/cli@^1.0.11",
+      "jsr:@std/collections@^1.0.10",
       "jsr:@std/crypto@^1.0.3",
       "jsr:@std/encoding@^1.0.6",
       "jsr:@std/fmt@^1.0.4",
-      "jsr:@std/fs@^1.0.9",
+      "jsr:@std/fs@^1.0.10",
       "jsr:@std/internal@^1.0.5",
       "jsr:@std/log@~0.224.13",
       "jsr:@std/path@^1.0.8",
       "npm:@types/cli-progress@^3.11.6",
-      "npm:@types/node@^22.10.7",
+      "npm:@types/node@^22.10.10",
       "npm:cli-progress@^3.12.0"
     ]
   }
