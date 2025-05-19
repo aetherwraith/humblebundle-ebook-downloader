@@ -28,7 +28,7 @@ await checkOptions(options);
 // Initialize the queues
 const queues = {
   fileCheck: newQueue(options.parallel),
-  orderInfo: newQueue(32), // multiply by two as it is pretty lightweight
+  orderInfo: newQueue(options.parallel),
   downloads: newQueue(options.parallel),
 };
 
@@ -82,7 +82,7 @@ switch (options.command?.toLowerCase()) {
     const checksumProgress = progress.create(0, 0, { file: "File Hash Queue" });
 
     const processFile = (file: WalkEntry) => {
-      checksumProgress.setTotal(checksumProgress.total + 1);
+      checksumProgress.setTotal(checksumProgress.getTotal() + 1);
 
       queues.fileCheck.add(async () => {
         checksums[file.name] = await checksum(file.path, progress);
