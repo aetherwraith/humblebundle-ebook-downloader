@@ -1,3 +1,4 @@
+import { crypto } from "@std/crypto";
 import { encodeHex } from "@std/encoding/hex";
 import { yellow } from "@std/fmt/colors";
 import { resolve } from "@std/path";

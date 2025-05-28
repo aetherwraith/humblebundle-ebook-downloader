@@ -94,7 +94,7 @@ export async function doDownload(
   const timeout = setTimeout(() => controller.abort(), 60000); // 60 second timeout
 
   try {
-    const req = await fetch(download.url.toString(), {
+    const req = await fetch(download.url, {
       signal: controller.signal,
       headers: {
         "Accept-Encoding": "gzip, deflate, br",
