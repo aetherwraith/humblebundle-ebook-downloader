@@ -1,5 +1,5 @@
 import { basename } from "@std/path/basename";
-import type { MultiBar } from "cli-progress";
+import { MultiBar } from "./progress.ts";
 import { formatFileSize } from "./formatNumbers.ts";
 
 const streamProgress = {
@@ -10,14 +10,17 @@ const streamProgress = {
       {
         file: this.colour(`${this.operation}: ${basename(this.file)}`),
       },
-      { formatValue: formatFileSize },
+      { formatFileSize },
     );
 
     // Track update time to avoid excessive UI updates
     this.lastUpdate = performance.now();
     this.updateThreshold = 100; // ms between updates
   },
-  transform(chunk, controller) {
+  transform(
+    chunk: Uint8Array,
+    controller: TransformStreamDefaultController<Uint8Array>,
+  ) {
     this.completed += chunk.byteLength;
 
     // Throttle progress bar updates for better performance
@@ -37,22 +40,38 @@ const streamProgress = {
   },
 };
 
-export class StreamProgress extends TransformStream {
+type StreamProgressProps = {
+  size: number;
+  file: string;
+  progress: MultiBar;
+  operation: string;
+  colour: (text: string) => string;
+  completed: number;
+  progressBar?: any;
+  lastUpdate?: number;
+  updateThreshold?: number;
+};
+
+export class StreamProgress extends TransformStream<Uint8Array, Uint8Array> {
   constructor(
     size: number,
     file: string,
     progress: MultiBar,
     operation: string,
-    colour: Function,
+    colour: (text: string) => string,
   ) {
-    super({
-      ...streamProgress,
-      size,
-      file,
-      progress,
-      operation,
-      colour,
-      completed: 0,
-    });
+    super(
+      {
+        ...streamProgress,
+        size,
+        file,
+        progress,
+        operation,
+        colour,
+        completed: 0,
+      } as
+        & TransformStreamTransformer<Uint8Array, Uint8Array>
+        & StreamProgressProps,
+    );
   }
 }

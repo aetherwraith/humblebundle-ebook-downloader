@@ -1,9 +1,9 @@
-import { isEql } from "@opentf/std";
 import { yellow } from "@std/fmt/colors";
 import { basename, extname, resolve } from "@std/path";
-import type { MultiBar } from "cli-progress";
 import sanitizeFilename from "sanitize-filename";
 import { normalizeFormat } from "./generic.ts";
+import { MultiBar } from "./progress.ts";
+
 import {
   Bundle,
   DownloadStruct,
@@ -12,6 +12,9 @@ import {
 } from "../types/bundle.ts";
 import { DownloadInfo, Options, Totals } from "../types/general.ts";
 
+/**
+ * Create download information from bundle data
+ */
 function createDownloadInfo(
   bundle: Bundle,
   subProduct: SubProduct,
@@ -20,12 +23,22 @@ function createDownloadInfo(
   date: Date,
 ): DownloadInfo {
   const url = new URL(struct.url.web);
-  const fileName = sanitizeFilename(options.humanFileNames ? `${subProduct.human_name}${extname(basename(url.pathname))}` : basename(url.pathname));
+
+  // Generate filename based on options
+  const fileName = sanitizeFilename(
+    options.humanFileNames
+      ? `${subProduct.human_name}${extname(basename(url.pathname))}`
+      : basename(url.pathname),
+  );
+
+  // Build download path according to folder structure options
   const downloadPath = resolve(
     options.downloadFolder,
     options.bundleFolders ? sanitizeFilename(bundle.product.human_name) : "",
     options.productFolders ? sanitizeFilename(subProduct.human_name) : "",
   );
+
+  // Resolve final file path
   const filePath = resolve(downloadPath, fileName);
 
   return {
@@ -44,167 +57,166 @@ function createDownloadInfo(
   };
 }
 
+/**
+ * Check if a download is a duplicate based on filename or checksums
+ */
 function isDuplicateDownload(
   downloads: DownloadInfo[],
   downloadInfo: DownloadInfo,
   struct: DownloadStruct,
   options: Options,
 ): boolean {
-  return (
-    options.dedup &&
-    downloads.some(
-      (elem) =>
-        isEql(
-          elem.fileName.toLocaleLowerCase(),
-          downloadInfo.fileName.toLocaleLowerCase(),
-        ) ||
-        (struct.sha1 &&
-          isEql(
-            struct.sha1.toLocaleLowerCase(),
-            elem.sha1?.toLocaleLowerCase(),
-          ) &&
-          struct.md5 &&
-          isEql(struct.md5.toLocaleLowerCase(), elem.md5?.toLocaleLowerCase())),
-    )
+  if (!options.dedup) return false;
+
+  return downloads.some(
+    (elem) =>
+      elem.fileName.toLocaleLowerCase() ===
+        downloadInfo.fileName.toLocaleLowerCase() ||
+      (struct.sha1 &&
+        struct.sha1.toLocaleLowerCase() === elem.sha1?.toLocaleLowerCase() &&
+        struct.md5 &&
+        struct.md5.toLocaleLowerCase() === elem.md5?.toLocaleLowerCase()),
   );
 }
 
+/**
+ * Filter bundles to create a list of downloadable items
+ */
 export function filterBundles(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
   progress: MultiBar,
-) {
+): DownloadInfo[] {
   progress.log(
     `${
-      yellow(
-        bundles.length.toString(),
-      )
+      yellow(bundles.length.toString())
     } bundles containing downloadable items`,
   );
   const downloads: DownloadInfo[] = [];
 
-  bundles.forEach((bundle) => {
-    bundle.subproducts.forEach((subProduct) => {
-      subProduct.downloads
-        .filter((elem) => options.platform.includes(elem.platform))
-        .forEach((download) => {
-          download.download_struct.forEach((struct) => {
-            if (struct.url) {
-              totals.preFilteredDownloads++;
-              const downloadInfo = createDownloadInfo(
-                bundle,
-                subProduct,
-                struct,
-                options,
-                struct.uploaded_at
-                  ? new Date(struct.uploaded_at)
-                  : new Date(bundle.created),
-              );
-              const isDuplicate = isDuplicateDownload(
-                downloads,
-                downloadInfo,
-                struct,
-                options,
+  for (const bundle of bundles) {
+    for (const subProduct of bundle.subproducts) {
+      const platformDownloads = subProduct.downloads
+        .filter((elem) => options.platform.includes(elem.platform));
+
+      for (const download of platformDownloads) {
+        for (const struct of download.download_struct) {
+          if (struct.url) {
+            totals.preFilteredDownloads++;
+            const downloadInfo = createDownloadInfo(
+              bundle,
+              subProduct,
+              struct,
+              options,
+              struct.uploaded_at
+                ? new Date(struct.uploaded_at)
+                : new Date(bundle.created),
+            );
+            const isDuplicate = isDuplicateDownload(
+              downloads,
+              downloadInfo,
+              struct,
+              options,
+            );
+
+            if (!isDuplicate) {
+              const pathMatch = downloads.some((elem) =>
+                elem.filePath.toLocaleLowerCase() ===
+                  downloadInfo.filePath.toLocaleLowerCase()
               );
 
-              if (!isDuplicate) {
-                if (
-                  !downloads.some((elem) =>
-                    isEql(
-                      elem.filePath.toLocaleLowerCase(),
-                      downloadInfo.filePath.toLocaleLowerCase(),
-                    )
-                  )
-                ) {
-                  downloads.push(downloadInfo);
-                } else {
-                  const duplicate = downloads.find((elem) =>
-                    isEql(
-                      elem.filePath.toLocaleLowerCase(),
-                      downloadInfo.filePath.toLocaleLowerCase(),
-                    )
-                  );
-                  progress.log(
-                    `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
-                  );
-                }
+              if (!pathMatch) {
+                downloads.push(downloadInfo);
               } else {
                 const duplicate = downloads.find((elem) =>
-                  isEql(
-                    elem.fileName.toLocaleLowerCase(),
-                    downloadInfo.fileName.toLocaleLowerCase(),
-                  )
+                  elem.filePath.toLocaleLowerCase() ===
+                    downloadInfo.filePath.toLocaleLowerCase()
                 );
                 progress.log(
-                  `Potential bob purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
+                  `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
                 );
               }
+            } else {
+              const duplicate = downloads.find((elem) =>
+                elem.fileName.toLocaleLowerCase() ===
+                  downloadInfo.fileName.toLocaleLowerCase()
+              );
+              progress.log(
+                `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
+              );
             }
-          });
-        });
-    });
-  });
+          }
+        }
+      }
+    }
+  }
 
   totals.filteredDownloads = downloads.length;
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Filter bundles to create a list of ebook downloads
+ * Priority of format to download cbz → epub → pdf_hd → pdf → mobi
+ */
 export function filterEbooks(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
   progress: MultiBar,
-) {
-  // priority of format to download cbz → epub → pdf_hd → pdf → mobi
+): DownloadInfo[] {
   progress.log(
     `${yellow(bundles.length.toString())} bundles containing ebooks`,
   );
   let downloads: DownloadInfo[] = [];
-  bundles.forEach((bundle) => {
+
+  for (const bundle of bundles) {
     let date = new Date(bundle.created);
-    bundle.subproducts.forEach((subProduct) => {
+
+    for (const subProduct of bundle.subproducts) {
       const filteredDownloads = subProduct.downloads.filter((elem) =>
-        isEql(elem.platform, Platform.Ebook)
+        elem.platform === Platform.Ebook
       );
-      options.format.forEach((format) => {
-        filteredDownloads.forEach((download) =>
-          download.download_struct.forEach((struct) => {
+
+      for (const format of options.format) {
+        for (const download of filteredDownloads) {
+          for (const struct of download.download_struct) {
             if (
               struct.name &&
               struct.url &&
-              isEql(normalizeFormat(struct.name), format)
+              normalizeFormat(struct.name) === format
             ) {
               totals.preFilteredDownloads++;
               const uploaded_at = struct.uploaded_at
                 ? new Date(struct.uploaded_at)
                 : new Date(bundle.created);
+
               if (uploaded_at > date) date = uploaded_at;
-              // TODO: check hash matches too
+
+              // Find existing download of the same ebook (if deduplication enabled)
               let existing;
               if (options.dedup) {
                 existing = downloads.find((elem) =>
-                  isEql(
-                    elem.machineName.toLocaleLowerCase(),
-                    subProduct.machine_name.toLocaleLowerCase(),
-                  )
+                  elem.machineName.toLocaleLowerCase() ===
+                    subProduct.machine_name.toLocaleLowerCase()
                 );
               }
-              if (
-                !existing ||
-                (date > existing.date &&
-                  isEql(
-                    struct.name.toLocaleLowerCase(),
-                    existing.structName.toLocaleLowerCase(),
-                  ))
-              ) {
+
+              // Keep newer version or if no existing version exists
+              const shouldKeep = !existing || (
+                date > existing.date &&
+                struct.name.toLocaleLowerCase() ===
+                  existing.structName.toLocaleLowerCase()
+              );
+
+              if (shouldKeep) {
+                // Remove existing version if we're replacing it
                 if (existing) {
                   downloads = downloads.filter(
                     (elem) =>
-                      !isEql(
-                        elem.machineName.toLocaleLowerCase(),
+                      elem.machineName.toLocaleLowerCase() !==
                         existing.machineName.toLocaleLowerCase(),
-                      ),
                   );
                 }
 
@@ -218,14 +230,13 @@ export function filterEbooks(
                     : new Date(bundle.created),
                 );
 
-                if (
-                  !downloads.some((elem) =>
-                    isEql(
-                      elem.filePath.toLocaleLowerCase(),
-                      downloadInfo.filePath.toLocaleLowerCase(),
-                    )
-                  )
-                ) {
+                // Check for path duplicates
+                const pathDuplicate = downloads.some((elem) =>
+                  elem.filePath.toLocaleLowerCase() ===
+                    downloadInfo.filePath.toLocaleLowerCase()
+                );
+
+                if (!pathDuplicate) {
                   downloads.push(downloadInfo);
                 } else {
                   progress.log(
@@ -234,11 +245,12 @@ export function filterEbooks(
                 }
               }
             }
-          })
-        );
-      });
-    });
-  });
+          }
+        }
+      }
+    }
+  }
+
   totals.filteredDownloads = downloads.length;
   return downloads.sort((a, b) => a.name.localeCompare(b.name));
 }

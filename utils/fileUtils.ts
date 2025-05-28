@@ -1,7 +1,5 @@
-import { isEql } from "@opentf/std";
 import { green } from "@std/fmt/colors";
 import { walk } from "@std/fs/walk";
-import * as log from "@std/log";
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
 import { cacheFileName } from "./constants.ts";
@@ -9,75 +7,86 @@ import { cacheFileName } from "./constants.ts";
 import { DownloadInfo, Options, Totals } from "../types/general.ts";
 import { Checksums } from "../types/bundle.ts";
 
-export async function readJsonFile(folder: string, file: string) {
+/**
+ * Read and parse a JSON file
+ */
+export async function readJsonFile(folder: string, file: string): Promise<any> {
   const filePath = resolve(folder, sanitizeFilename(file));
 
-  const contents = await Deno.readTextFile(filePath).catch((_) => {
-    return "{}";
-  });
-
-  return JSON.parse(contents);
+  try {
+    const contents = await Deno.readTextFile(filePath);
+    return JSON.parse(contents);
+  } catch (_) {
+    return {};
+  }
 }
 
+/**
+ * Write an object to a JSON file
+ */
 export async function writeJsonFile(
   folder: string,
   file: string,
   contents: object,
-) {
+): Promise<void> {
   const filePath = resolve(folder, sanitizeFilename(file));
   await Deno.mkdir(folder, { recursive: true });
-  return Deno.writeTextFile(filePath, JSON.stringify(contents));
+  return Deno.writeTextFile(filePath, JSON.stringify(contents, null, 2));
 }
 
+/**
+ * Synchronously write an object to a JSON file
+ */
 export function writeJsonFileSync(
   folder: string,
   file: string,
   contents: object,
-) {
+): void {
   const filePath = resolve(folder, sanitizeFilename(file));
   Deno.mkdirSync(folder, { recursive: true });
-  Deno.writeTextFileSync(filePath, JSON.stringify(contents));
+  Deno.writeTextFileSync(filePath, JSON.stringify(contents, null, 2));
 }
 
-export async function loadChecksumCache(options: Options) {
-  // load cache file of checksums
-
+/**
+ * Load checksum cache and set up signal handlers for saving on exit
+ */
+export async function loadChecksumCache(
+  options: Options,
+): Promise<Record<string, Checksums>> {
+  // Load cache file of checksums
   const checksumCache: Record<string, Checksums> = await readJsonFile(
     options.downloadFolder,
     cacheFileName,
   );
 
-  Deno.addSignalListener("SIGINT", () => {
-    console.log("SIGINT");
-    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
-  });
-
-  Deno.addSignalListener("SIGABRT", () => {
-    console.log("SIGABRT");
-    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
-  });
-
-  Deno.addSignalListener("SIGQUIT", () => {
-    console.log("SIGQUIT");
-    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
-  });
-
-  Deno.addSignalListener("SIGTERM", () => {
-    console.log("SIGTERM");
-    writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
-  });
-
-  globalThis.onunload = () => {
-    console.log("onunload");
+  const saveCache = () => {
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   };
 
-  log.info(
+  // Set up signal handlers
+  const signals = ["SIGINT", "SIGABRT", "SIGQUIT", "SIGTERM"];
+  for (const signal of signals) {
+    Deno.addSignalListener(signal, () => {
+      console.log(`Received ${signal}, saving cache...`);
+      saveCache();
+    });
+  }
+
+  // Handle unload event
+  globalThis.addEventListener("unload", () => {
+    console.log("Unloading, saving cache...");
+    saveCache();
+  });
+
+  console.log(
     `${green(Object.keys(checksumCache).length.toString())} checksums loaded`,
   );
   return checksumCache;
 }
 
+/**
+ * Get an iterator for all files in the download folder, excluding JSON files
+ */
 export function walkExistingFiles(options: Options) {
   return walk(options.downloadFolder, {
     includeDirs: false,
@@ -86,38 +95,36 @@ export function walkExistingFiles(options: Options) {
   });
 }
 
+/**
+ * Clean up files and checksums that are no longer needed
+ */
 export async function clean(
   filteredBundles: DownloadInfo[],
   checksums: Record<string, Checksums>,
   options: Options,
   totals: Totals,
-) {
-  log.info("Removing files...");
+): Promise<void> {
+  console.log("Removing files...");
   for await (const file of walkExistingFiles(options)) {
     if (
       !filteredBundles.some((download) =>
-        isEql(
-          file.path.toLocaleLowerCase(),
-          download.filePath.toLocaleLowerCase(),
-        )
+        file.path.toLocaleLowerCase() === download.filePath.toLocaleLowerCase()
       )
     ) {
-      log.info(`Deleting extra file: ${file.path}`);
+      console.log(`Deleting extra file: ${file.path}`);
       totals.removedFiles += 1;
       await Deno.remove(file.path);
     }
   }
-  log.info("Removing checksums from cache");
+
+  console.log("Removing checksums from cache");
   Object.keys(checksums).forEach((fileName) => {
     if (
       !filteredBundles.some((download) =>
-        isEql(
-          fileName.toLocaleLowerCase(),
-          download.fileName.toLocaleLowerCase(),
-        )
+        fileName.toLocaleLowerCase() === download.fileName.toLocaleLowerCase()
       )
     ) {
-      log.info(`Removing checksum from cache: ${fileName}`);
+      console.log(`Removing checksum from cache: ${fileName}`);
       totals.removedChecksums += 1;
       delete checksums[fileName];
     }

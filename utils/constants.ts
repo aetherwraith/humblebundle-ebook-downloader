@@ -1,13 +1,14 @@
-import { RetryOptions } from "@std/async/retry";
-import { ParseOptions } from "@std/cli/parse-args";
-import packageInfo from "../deno.json" with { type: "json" };
 import { Platform } from "../types/bundle.ts";
 
 export const SUPPORTED_FORMATS = ["cbz", "epub", "pdf_hd", "pdf", "mobi"];
 export const optionsFileName = "options.json";
 export const cacheFileName = "checksums.json";
+export const version = "3.1.0";
 
-export const version = packageInfo.version;
+// Network-related constants
+export const NETWORK_RETRY_COUNT = 3;
+export const NETWORK_RETRY_DELAY = 1000; // Initial delay in ms
+
 export const userAgent = `HumbleBundle-Ebook-Downloader/${version}`;
 
 export const COMMANDS = {
@@ -20,9 +21,13 @@ export const COMMANDS = {
   trove: "trove",
 };
 
-const argBooleans = ["dedup", "bundleFolders",
-"productFolders",
-"humanFileNames"];
+const argBooleans = [
+  "dedup",
+  "bundleFolders",
+  "productFolders",
+  "humanFileNames",
+];
+
 const argDefaults = {
   dedup: true,
   bundleFolders: true,
@@ -32,7 +37,9 @@ const argDefaults = {
   format: SUPPORTED_FORMATS,
   platform: Object.values(Platform),
 };
+
 const argStrings = ["downloadFolder", "authToken"];
+
 const argAlias = {
   downloadFolder: "d",
   parallel: "l",
@@ -41,7 +48,9 @@ const argAlias = {
   platform: "p",
   bundleFolders: "b",
 };
+
 const argCollect = ["format", "platform"];
+
 export const argDescriptions = {
   dedup: "Dedup the downloads",
   bundleFolders: "Arrange downloads in bundle folders",
@@ -55,10 +64,11 @@ export const argDescriptions = {
   platform:
     'Platform(s) to download. Can be specified multiple times. Will prioritise in the order given, i.e. if you say "-p linux -p win" will download linux format or win if linux does not exist, unless --no-dedup is specified.',
 };
+
 export const argRequired = ["downloadFolder"];
 export const argNoSave = ["downloadFolder", "authToken"];
 
-export const parseOptions: ParseOptions = {
+export const parseOptions = {
   boolean: argBooleans,
   negatable: argBooleans,
   default: argDefaults,
@@ -72,9 +82,3 @@ export const MISSING_DOWNLOAD_FOLDER_ERROR =
   "Please specify download folder (--download-folder or -d)";
 export const MISSING_AUTH_TOKEN_ERROR =
   "Please specify auth token (--auth-token or -t)";
-export const retryOptions: RetryOptions = {
-  maxAttempts: 3,
-  minTimeout: 10,
-  multiplier: 2,
-  jitter: 0,
-};

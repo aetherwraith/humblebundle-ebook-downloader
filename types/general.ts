@@ -1,4 +1,4 @@
-import { Queue } from "@henrygd/queue";
+import { Queue } from "../utils/queue.ts";
 
 export interface Totals {
   bundles: number;

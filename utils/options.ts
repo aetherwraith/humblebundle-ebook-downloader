@@ -1,8 +1,4 @@
-import { isEql } from "@opentf/std";
-import { includesValue } from "@std/collections/includes-value";
 import { green, red } from "@std/fmt/colors";
-import { exists } from "@std/fs/exists";
-import * as log from "@std/log";
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
 import {
@@ -22,16 +18,28 @@ import { Options } from "../types/general.ts";
 import { Platform } from "../types/bundle.ts";
 import { TrovePlatform } from "../types/trove.ts";
 
-export async function checkOptions(options: Options) {
+/**
+ * Check and process options
+ */
+export async function checkOptions(options: Options): Promise<void> {
   validateInitialOptions(options);
-  if (
-    options.authToken &&
-    (await exists(resolve(sanitizeFilename(options.authToken))))
-  ) {
-    options.authToken = (
-      await Deno.readTextFile(resolve(sanitizeFilename(options.authToken)))
-    ).replace("\n", "");
+
+  // If auth token is a file path, read it
+  if (options.authToken) {
+    try {
+      const tokenPath = resolve(sanitizeFilename(options.authToken));
+      const tokenInfo = await Deno.stat(tokenPath);
+
+      if (tokenInfo.isFile) {
+        options.authToken = (
+          await Deno.readTextFile(tokenPath)
+        ).replace("\n", "");
+      }
+    } catch (_) {
+      // Not a file path, use as-is
+    }
   }
+
   const savedOptions = await readJsonFile(
     options.downloadFolder,
     optionsFileName,
@@ -41,10 +49,13 @@ export async function checkOptions(options: Options) {
   await writeJsonFile(options.downloadFolder, optionsFileName, optionsToSave);
 }
 
+/**
+ * Validate initial options and set defaults
+ */
 function validateInitialOptions(options: Options): void {
   if (
     options._?.length !== 1 ||
-    !includesValue(COMMANDS, options._[0].toLowerCase())
+    !Object.values(COMMANDS).includes(options._[0].toLowerCase())
   ) {
     optionError(INVALID_COMMAND_ERROR);
   } else if (!options.downloadFolder) {
@@ -56,10 +67,15 @@ function validateInitialOptions(options: Options): void {
   }
 }
 
+/**
+ * Initialize options object with default values
+ */
 function initializeOptionsToSave(): Options {
   return {
     dedup: false,
     bundleFolders: false,
+    productFolders: false,
+    humanFileNames: false,
     parallel: 0,
     format: [],
     platform: [],
@@ -68,6 +84,9 @@ function initializeOptionsToSave(): Options {
   };
 }
 
+/**
+ * Process options and check for validity
+ */
 function processOptions(
   options: Options,
   savedOptions: Options,
@@ -92,6 +111,9 @@ function processOptions(
   }
 }
 
+/**
+ * Handle differences between saved options and current options
+ */
 function handleOptionDifferences(
   key: string,
   options: Options,
@@ -99,9 +121,10 @@ function handleOptionDifferences(
   optionsToSave: Options,
 ): void {
   optionsToSave[key] = options[key];
+
   if (
     Object.hasOwn(savedOptions, key) &&
-    !isEql(savedOptions[key], options[key])
+    JSON.stringify(savedOptions[key]) !== JSON.stringify(options[key])
   ) {
     const useNewValue = promptOptionChange(
       key,
@@ -115,6 +138,9 @@ function handleOptionDifferences(
   }
 }
 
+/**
+ * Prompt user when option differs from saved value
+ */
 function promptOptionChange(
   key: string,
   original: unknown,
@@ -126,16 +152,22 @@ function promptOptionChange(
   );
 }
 
-function optionError(message: string): void {
-  log.error(message);
+/**
+ * Display error and usage information, then exit
+ */
+function optionError(message: string): never {
+  console.error(message);
   usage();
   Deno.exit(1);
 }
 
+/**
+ * Check if all array values are valid
+ */
 function checkArrayOption(values: string[], validValues: string[]): void {
   if (!values.every((value) => validValues.includes(value))) {
     optionError(
-      `${values} contains one or more invalid value. Supported values are ${
+      `${values} contains one or more invalid values. Supported values are ${
         validValues.join(
           ",",
         )
@@ -144,16 +176,21 @@ function checkArrayOption(values: string[], validValues: string[]): void {
   }
 }
 
+/**
+ * Display usage information
+ */
 function usage(): void {
-  log.info(
+  console.log(
     "To download your humble bundle artifacts please use the following parameters",
   );
-  log.info(`Specify a command as one of ${Object.values(COMMANDS).join(",")}`);
+  console.log(
+    `Specify a command as one of ${Object.values(COMMANDS).join(",")}`,
+  );
   for (const [key, value] of Object.entries(argDescriptions)) {
     if (argRequired.includes(key)) {
-      log.info(`${red("(Required)")} ${red(key)} : ${value}`);
+      console.log(`${red("(Required)")} ${red(key)} : ${value}`);
     } else {
-      log.info(`${green("(Optional)")} ${green(key)} : ${value}`);
+      console.log(`${green("(Optional)")} ${green(key)} : ${value}`);
     }
   }
 }

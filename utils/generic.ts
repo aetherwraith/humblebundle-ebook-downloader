@@ -1,4 +1,7 @@
-export function normalizeFormat(format: string) {
+/**
+ * Normalize format string to a standard value
+ */
+export function normalizeFormat(format: string): string {
   switch (format.toLowerCase()) {
     case ".cbz":
       return "cbz";
@@ -12,7 +15,10 @@ export function normalizeFormat(format: string) {
   }
 }
 
-export function getExtension(format: string) {
+/**
+ * Get file extension based on format
+ */
+export function getExtension(format: string): string {
   switch (format.toLowerCase()) {
     case "pdf_hd":
       return ".hd.pdf";
