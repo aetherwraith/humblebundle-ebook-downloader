@@ -48,19 +48,35 @@ export async function doDownload(
     read: true,
     write: true,
     create: true,
+    truncate: true
   });
   const fileStream = saveFile.writable;
-  const req = await fetch(download.url);
+
+  // Use Deno's native AbortController for request cancellation support
+  const controller = new AbortController();
+  const req = await fetch(download.url, { signal: controller.signal });
+
+  if (!req.ok || !req.body) {
+    throw new Error(`Failed to fetch: ${req.status} ${req.statusText}`);
+  }
+
   const size = Number(req.headers.get("content-length"));
-  const downloadStream = req.body?.pipeThrough(
+  const downloadStream = req.body.pipeThrough(
     new StreamProgress(size, download.filePath, progress, "Downloading", cyan),
   );
+
+  // Use more efficient stream handling
   const [writeStream, checksumStream] = downloadStream.tee();
   const [hash, _] = await Promise.all([
     computeFileHash(checksumStream),
-    writeStream.pipeTo(fileStream),
+    writeStream.pipeTo(fileStream).catch(err => {
+      controller.abort(); // Abort fetch if write fails
+      throw err;
+    })
   ]);
+
   checksums[download.fileName] = hash;
+  saveFile.close();
 }
 
 export function downloadItems(

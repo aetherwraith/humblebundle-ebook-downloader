@@ -25,11 +25,12 @@ import { filterTroves } from "./utils/troves.ts";
 const options: Options = parseArgs(Deno.args, parseOptions);
 await checkOptions(options);
 
-// Initialize the queues
+// Initialize the queues with optimized concurrency settings
+const defaultParallel = navigator.hardwareConcurrency || 4;
 const queues = {
-  fileCheck: newQueue(options.parallel),
-  orderInfo: newQueue(options.parallel),
-  downloads: newQueue(options.parallel),
+  fileCheck: newQueue(options.parallel || defaultParallel),
+  orderInfo: newQueue(options.parallel || Math.min(8, defaultParallel)),
+  downloads: newQueue(options.parallel || Math.min(6, defaultParallel)),
 };
 
 const totals: Totals = {

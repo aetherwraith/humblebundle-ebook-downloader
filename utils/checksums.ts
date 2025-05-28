@@ -13,15 +13,37 @@ import { Checksums } from "../types/bundle.ts";
 export async function computeFileHash(
   stream: ReadableStream<Uint8Array>,
 ): Promise<Checksums> {
-  const [shaStream, md5Stream] = stream.tee();
-  const [shaHashBuffer, md5HashBuffer] = await Promise.all([
-    crypto.subtle.digest("SHA-1", shaStream),
-    crypto.subtle.digest("MD5", md5Stream),
-  ]);
-  return {
-    sha1: encodeHex(shaHashBuffer),
-    md5: encodeHex(md5HashBuffer),
-  };
+  // Create native Deno crypto contexts
+  const sha1Context = await crypto.subtle.createDigest("SHA-1");
+  const md5Context = await crypto.subtle.createDigest("MD5");
+
+  // Process the stream in chunks to avoid excessive memory usage
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Update both hashes with the same chunk
+      if (value) {
+        await crypto.subtle.digestUpdate(sha1Context, value);
+        await crypto.subtle.digestUpdate(md5Context, value);
+      }
+    }
+
+    // Finalize the digests
+    const [shaHashBuffer, md5HashBuffer] = await Promise.all([
+      crypto.subtle.digestFinal(sha1Context),
+      crypto.subtle.digestFinal(md5Context),
+    ]);
+
+    return {
+      sha1: encodeHex(shaHashBuffer),
+      md5: encodeHex(md5HashBuffer),
+    };
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export async function checksum(

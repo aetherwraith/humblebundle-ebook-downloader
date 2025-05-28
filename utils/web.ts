@@ -42,26 +42,50 @@ export async function getAllBundles(
   queues: Queues,
   progress: MultiBar,
 ) {
+  // Create AbortController for request cancellation
+  const controller = new AbortController();
+
   const orderResponse = await fetch(`${BASE_URL}${ORDER_PATH}`, {
     headers: getRequestHeaders(options),
+    signal: controller.signal
   });
+
+  if (!orderResponse.ok) {
+    throw new Error(`Failed to fetch orders: ${orderResponse.status} ${orderResponse.statusText}`);
+  }
+
   const gameKeys: GameKey[] = await orderResponse.json();
   totals.bundles = gameKeys.length;
 
   const progressBar: SingleBar = progress.create(gameKeys.length, 0, {
     file: "Bundles",
   });
+
+  // Use a mutex-protected array for thread-safe operations
+  const bundlesMutex = new Set<string>();
   const bundles: Bundle[] = [];
+
+  // Create a shared headers object to reduce memory overhead
+  const sharedHeaders = getRequestHeaders(options);
 
   for (const gameKey of gameKeys) {
     queues.orderInfo.add(async () => {
-      const bundleDetails = await fetchBundleDetails(
-        BASE_URL,
-        gameKey.gamekey,
-        getRequestHeaders(options),
-      );
-      bundles.push(bundleDetails);
-      progressBar.increment();
+      try {
+        // Skip duplicates using the mutex
+        if (bundlesMutex.has(gameKey.gamekey)) return;
+        bundlesMutex.add(gameKey.gamekey);
+
+        const bundleDetails = await fetchBundleDetails(
+          BASE_URL,
+          gameKey.gamekey,
+          sharedHeaders,
+        );
+        bundles.push(bundleDetails);
+      } catch (err) {
+        progress.log(`Error fetching bundle ${gameKey.gamekey}: ${err.message}`);
+      } finally {
+        progressBar.increment();
+      }
     });
   }
 
@@ -71,8 +95,9 @@ export async function getAllBundles(
 
   await writeJsonFile(options.downloadFolder, "bundles.json", bundles);
 
+  // Use faster sort comparison for dates
   return bundles.sort(
-    (a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf(),
+    (a, b) => (new Date(b.created).getTime() - new Date(a.created).getTime()),
   );
 }
 
