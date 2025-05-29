@@ -1,6 +1,6 @@
 import { basename } from "@std/path/basename";
 import { MultiBar } from "./progress.ts";
-import { formatFileSize } from "./formatNumbers.ts";
+import { formatBytes } from "./formatNumbers.ts";
 
 const streamProgress = {
   start() {
@@ -10,7 +10,7 @@ const streamProgress = {
       {
         file: this.colour(`${this.operation}: ${basename(this.file)}`),
       },
-      { formatFileSize },
+      formatBytes,
     );
 
     // Track update time to avoid excessive UI updates

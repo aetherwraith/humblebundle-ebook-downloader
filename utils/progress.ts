@@ -3,6 +3,8 @@
  */
 
 import { gray } from "@std/fmt/colors";
+import { format } from "@std/fmt/duration";
+import { formatPercentage } from "./formatNumbers.ts";
 
 export interface ProgressBarOptions {
   width?: number;
@@ -27,18 +29,14 @@ export class SingleBar {
   private clearOnComplete: boolean;
   private startTime: number;
   private payload: Record<string, string>;
-  private formatFn: Record<
-    string,
-    (value: string, options?: unknown, payload?: unknown) => string
-  >;
+  private formatFn: (value: number) => string;
+  private isMultiBar: boolean;
 
   constructor(
     options: ProgressBarOptions = {},
     payload: Record<string, string> = {},
-    formatFn: Record<
-      string,
-      (value: string, options?: unknown, payload?: unknown) => string
-    > = {},
+    formatFn: (value: number) => string = (value: number) => value.toString(),
+    isMultiBar = false,
   ) {
     this.total = 0;
     this.width = options.width ?? 40;
@@ -49,6 +47,7 @@ export class SingleBar {
     this.payload = payload;
     this.formatFn = formatFn;
     this.startTime = Date.now();
+    this.isMultiBar = isMultiBar;
   }
 
   setTotal(total: number): void {
@@ -77,6 +76,15 @@ export class SingleBar {
   }
 
   private render(): void {
+    if (!this.isMultiBar) {
+      const output = this.getOutput();
+
+      // Clear line and render
+      console.log("\u001b[1A\u001b[2K" + output);
+    }
+  }
+
+  getOutput() {
     const percentage = this.total > 0
       ? Math.round((this.current / this.total) * 100)
       : 0;
@@ -88,15 +96,10 @@ export class SingleBar {
 
     const elapsedTime = Date.now() - this.startTime;
     const timePerUnit = this.current > 0 ? elapsedTime / this.current : 0;
-    const eta = timePerUnit * (this.total - this.current);
+    const eta = Math.round(timePerUnit * (this.total - this.current));
 
     const formatDuration = (ms: number): string => {
-      const seconds = Math.floor(ms / 1000) % 60;
-      const minutes = Math.floor(ms / (1000 * 60)) % 60;
-      const hours = Math.floor(ms / (1000 * 60 * 60));
-      return `${hours.toString().padStart(2, "0")}:${
-        minutes.toString().padStart(2, "0")
-      }:${seconds.toString().padStart(2, "0")}`;
+      return ms > 0 ? format(ms, { ignoreZero: true, style: "narrow" }) : "0s";
     };
 
     const duration_formatted = formatDuration(elapsedTime);
@@ -104,9 +107,12 @@ export class SingleBar {
 
     let output = this.format;
     output = output.replace("{bar}", bar);
-    output = output.replace("{percentage}", percentage.toString());
-    output = output.replace("{value}", this.current.toString());
-    output = output.replace("{total}", this.total.toString());
+    output = output.replace(
+      "{percentage}",
+      formatPercentage(percentage.toString()),
+    );
+    output = output.replace("{value}", this.formatFn(this.current));
+    output = output.replace("{total}", this.formatFn(this.total));
     output = output.replace("{duration_formatted}", duration_formatted);
     output = output.replace("{eta_formatted}", eta_formatted);
 
@@ -114,15 +120,10 @@ export class SingleBar {
     for (const [key, value] of Object.entries(this.payload)) {
       const placeholder = `{${key}}`;
       if (output.includes(placeholder)) {
-        const formattedValue = this.formatFn[key]
-          ? this.formatFn[key](value, {}, this.payload)
-          : value;
-        output = output.replace(placeholder, formattedValue);
+        output = output.replace(placeholder, value);
       }
     }
-
-    // Clear line and render
-    console.log("\u001b[1A\u001b[2K" + output);
+    return output;
   }
 }
 
@@ -136,7 +137,7 @@ export class MultiBar {
     this.options = options;
     this.renderInterval = setInterval(
       () => this.render(),
-      100,
+      1000,
     ) as unknown as number;
   }
 
@@ -144,12 +145,9 @@ export class MultiBar {
     total: number,
     startValue: number,
     payload: Record<string, string> = {},
-    formatFn: Record<
-      string,
-      (value: string, options?: unknown, payload?: unknown) => string
-    > = {},
+    formatFn: (value: number) => string = (value: number) => value.toString(),
   ): SingleBar {
-    const bar = new SingleBar(this.options, payload, formatFn);
+    const bar = new SingleBar(this.options, payload, formatFn, true);
     bar.setTotal(total);
     if (startValue > 0) {
       bar.update(startValue);
@@ -183,8 +181,21 @@ export class MultiBar {
   }
 
   private render(): void {
-    // No need to re-render frequently since each bar renders itself
-    // This is just for alignment and cleanup purposes
+    // for (let i = 1; i <= this.bars.length; i++) {
+    //   console.log("\u001b[1A\u001b[2K");
+    // }
+
+    let output = "";
+
+    for (const _ of this.bars) {
+      output += "\u001b[1A\u001b[2K"
+    }
+
+    for (const bar of this.bars) {
+      output += bar.getOutput() + "\n";
+    }
+
+    console.log(output.slice(0, -1));
   }
 }
 

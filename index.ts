@@ -120,6 +120,7 @@ async function main() {
       break;
     }
     case COMMANDS.all: {
+      console.log("Downloading all bundles...");
       const bundles = await getAllBundles(options, totals, queues, progress);
       filteredBundles = filterBundles(bundles, options, totals, progress);
       downloadItems(filteredBundles, progress, checksums, queues, totals);
@@ -141,11 +142,6 @@ async function main() {
   }
 
   // Wait for queues to complete
-  await writeJsonFile(
-    options.downloadFolder,
-    "filteredBundles.json",
-    filteredBundles,
-  );
   await Promise.all(Object.values(queues).map((queue) => queue.done()));
   progress.stop();
   await clean(filteredBundles, checksums, options, totals);

@@ -116,7 +116,6 @@ export async function getAllBundles(
         headers: getRequestHeaders(options),
         signal: controller.signal,
       });
-
       if (!response.ok) {
         throw new Error(
           `Failed to fetch orders: ${response.status} ${response.statusText}`,

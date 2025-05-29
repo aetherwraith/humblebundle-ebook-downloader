@@ -128,23 +128,7 @@ export function filterBundles(
 
               if (!pathMatch) {
                 downloads.push(downloadInfo);
-              } else {
-                const duplicate = downloads.find((elem) =>
-                  elem.filePath.toLocaleLowerCase() ===
-                    downloadInfo.filePath.toLocaleLowerCase()
-                );
-                progress.log(
-                  `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
-                );
               }
-            } else {
-              const duplicate = downloads.find((elem) =>
-                elem.fileName.toLocaleLowerCase() ===
-                  downloadInfo.fileName.toLocaleLowerCase()
-              );
-              progress.log(
-                `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
-              );
             }
           }
         }
@@ -238,10 +222,6 @@ export function filterEbooks(
 
                 if (!pathDuplicate) {
                   downloads.push(downloadInfo);
-                } else {
-                  progress.log(
-                    `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${existing?.bundle}, ${existing?.fileName}`,
-                  );
                 }
               }
             }
