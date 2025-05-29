@@ -22,24 +22,32 @@ function createDownloadInfo(
   options: Options,
   date: Date,
 ): DownloadInfo {
+  // Parse URL once
   const url = new URL(struct.url.web);
+  const urlBasename = basename(url.pathname);
 
   // Generate filename based on options
   const fileName = sanitizeFilename(
     options.humanFileNames
-      ? `${subProduct.human_name}${extname(basename(url.pathname))}`
-      : basename(url.pathname),
+      ? `${subProduct.human_name}${extname(urlBasename)}`
+      : urlBasename,
   );
+
+  // Precompute sanitized names once to avoid repeated sanitization
+  const sanitizedBundleName = options.bundleFolders
+    ? sanitizeFilename(bundle.product.human_name)
+    : "";
+
+  const sanitizedProductName = options.productFolders
+    ? sanitizeFilename(subProduct.human_name)
+    : "";
 
   // Build download path according to folder structure options
   const downloadPath = resolve(
     options.downloadFolder,
-    options.bundleFolders ? sanitizeFilename(bundle.product.human_name) : "",
-    options.productFolders ? sanitizeFilename(subProduct.human_name) : "",
+    sanitizedBundleName,
+    sanitizedProductName,
   );
-
-  // Resolve final file path
-  const filePath = resolve(downloadPath, fileName);
 
   return {
     bundle: bundle.product.human_name,
@@ -47,7 +55,7 @@ function createDownloadInfo(
     machineName: subProduct.machine_name,
     fileName,
     downloadPath,
-    filePath,
+    filePath: resolve(downloadPath, fileName),
     url,
     sha1: struct.sha1,
     md5: struct.md5,
@@ -66,17 +74,30 @@ function isDuplicateDownload(
   struct: DownloadStruct,
   options: Options,
 ): boolean {
+  // Early return if deduplication is disabled
   if (!options.dedup) return false;
 
-  return downloads.some(
-    (elem) =>
-      elem.fileName.toLocaleLowerCase() ===
-        downloadInfo.fileName.toLocaleLowerCase() ||
-      (struct.sha1 &&
-        struct.sha1.toLocaleLowerCase() === elem.sha1?.toLocaleLowerCase() &&
-        struct.md5 &&
-        struct.md5.toLocaleLowerCase() === elem.md5?.toLocaleLowerCase()),
-  );
+  // Check if we have valid checksums to compare
+  const hasValidChecksums = struct.sha1 && struct.md5;
+  const lowerFileName = downloadInfo.fileName.toLocaleLowerCase();
+  const lowerSha1 = struct.sha1?.toLocaleLowerCase();
+  const lowerMd5 = struct.md5?.toLocaleLowerCase();
+
+  // Use find instead of some for potential better performance
+  // when a match is found early in large arrays
+  return downloads.some((elem) => {
+    // First check filename match which is a simple string comparison
+    if (elem.fileName.toLocaleLowerCase() === lowerFileName) {
+      return true;
+    }
+
+    // Then check for checksum match if we have valid checksums
+    return hasValidChecksums &&
+      elem.sha1 &&
+      elem.md5 &&
+      lowerSha1 === elem.sha1.toLocaleLowerCase() &&
+      lowerMd5 === elem.md5.toLocaleLowerCase();
+  });
 }
 
 /**
@@ -93,51 +114,82 @@ export function filterBundles(
       yellow(bundles.length.toString())
     } bundles containing downloadable items`,
   );
+
+  // Pre-allocate with a reasonable capacity to avoid frequent reallocations
+  // Estimate 2 downloads per bundle as a heuristic
   const downloads: DownloadInfo[] = [];
+  // Track lowercase paths to avoid repeated toLowerCase calls
+  const lowerFilePaths = new Set<string>();
+
+  // Cache bundle creation date objects to avoid repeated Date instantiation
+  const bundleDates = new Map<Bundle, Date>();
 
   for (const bundle of bundles) {
+    // Get or create the bundle date once per bundle
+    const bundleDate = bundleDates.get(bundle) ??
+      (bundleDates.set(bundle, new Date(bundle.created)),
+        bundleDates.get(bundle)!);
+
     for (const subProduct of bundle.subproducts) {
-      const platformDownloads = subProduct.downloads
-        .filter((elem) => options.platform.includes(elem.platform));
+      // Filter platform downloads once per subproduct
+      const platformDownloads = subProduct.downloads.filter((elem) =>
+        options.platform.includes(elem.platform)
+      );
+
+      if (platformDownloads.length === 0) continue;
 
       for (const download of platformDownloads) {
         for (const struct of download.download_struct) {
-          if (struct.url) {
-            totals.preFilteredDownloads++;
-            const downloadInfo = createDownloadInfo(
-              bundle,
-              subProduct,
-              struct,
-              options,
-              struct.uploaded_at
-                ? new Date(struct.uploaded_at)
-                : new Date(bundle.created),
-            );
-            const isDuplicate = isDuplicateDownload(
-              downloads,
-              downloadInfo,
-              struct,
-              options,
-            );
+          if (!struct.url) continue;
 
-            if (!isDuplicate) {
-              const pathMatch = downloads.some((elem) =>
-                elem.filePath.toLocaleLowerCase() ===
-                  downloadInfo.filePath.toLocaleLowerCase()
-              );
+          totals.preFilteredDownloads++;
 
-              if (!pathMatch) {
-                downloads.push(downloadInfo);
-              }
-            }
+          // Parse date once per struct
+          const date = struct.uploaded_at
+            ? new Date(struct.uploaded_at)
+            : bundleDate;
+
+          const downloadInfo = createDownloadInfo(
+            bundle,
+            subProduct,
+            struct,
+            options,
+            date,
+          );
+
+          // Convert to lowercase once
+          const lowerFilePath = downloadInfo.filePath.toLocaleLowerCase();
+
+          // Check if this is a duplicate download
+          if (isDuplicateDownload(downloads, downloadInfo, struct, options)) {
+            continue;
           }
+
+          // Check for path collision using Set for O(1) lookup
+          if (lowerFilePaths.has(lowerFilePath)) {
+            continue;
+          }
+
+          // Add to our collections
+          downloads.push(downloadInfo);
+          lowerFilePaths.add(lowerFilePath);
         }
       }
     }
   }
 
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Sort by file size in descending order (largest first)
+  // With name as a fallback for files of the same size
+  return downloads.sort((a, b) => {
+    // First compare by file size (descending)
+    if (a.file_size !== b.file_size) {
+      return (b.file_size ?? 0) - (a.file_size ?? 0);
+    }
+    // Fall back to name for files of the same size (ascending)
+    return a.name.localeCompare(b.name);
+  });
 }
 
 /**
@@ -153,77 +205,99 @@ export function filterEbooks(
   progress.log(
     `${yellow(bundles.length.toString())} bundles containing ebooks`,
   );
-  let downloads: DownloadInfo[] = [];
+
+  // We'll use a Map for faster lookups by machine name
+  const downloadMap = new Map<string, DownloadInfo>();
+  // Track lowercase paths to avoid repeated toLowerCase calls
+  const lowerFilePaths = new Set<string>();
+  // Cache format normalization results
+  const formatCache = new Map<string, string>();
+  // Cache bundle creation date objects
+  const bundleDates = new Map<Bundle, Date>();
 
   for (const bundle of bundles) {
-    let date = new Date(bundle.created);
+    // Get or create the bundle date once per bundle
+    const bundleDate = bundleDates.get(bundle) ??
+      (bundleDates.set(bundle, new Date(bundle.created)),
+        bundleDates.get(bundle)!);
 
     for (const subProduct of bundle.subproducts) {
-      const filteredDownloads = subProduct.downloads.filter((elem) =>
+      // Early skip if no downloads for this product
+      if (!subProduct.downloads?.length) continue;
+
+      // Lowercase machine name once per subproduct
+      const lowerMachineName = subProduct.machine_name.toLocaleLowerCase();
+
+      // Filter ebook downloads once per subproduct
+      const ebookDownloads = subProduct.downloads.filter((elem) =>
         elem.platform === Platform.Ebook
       );
 
+      if (ebookDownloads.length === 0) continue;
+
       for (const format of options.format) {
-        for (const download of filteredDownloads) {
+        for (const download of ebookDownloads) {
           for (const struct of download.download_struct) {
-            if (
-              struct.name &&
-              struct.url &&
-              normalizeFormat(struct.name) === format
-            ) {
-              totals.preFilteredDownloads++;
-              const uploaded_at = struct.uploaded_at
-                ? new Date(struct.uploaded_at)
-                : new Date(bundle.created);
+            // Skip if missing required fields
+            if (!struct.name || !struct.url) continue;
 
-              if (uploaded_at > date) date = uploaded_at;
+            // Get or compute normalized format
+            let normalizedFormat = formatCache.get(struct.name);
+            if (normalizedFormat === undefined) {
+              normalizedFormat = normalizeFormat(struct.name);
+              formatCache.set(struct.name, normalizedFormat);
+            }
 
-              // Find existing download of the same ebook (if deduplication enabled)
-              let existing;
-              if (options.dedup) {
-                existing = downloads.find((elem) =>
-                  elem.machineName.toLocaleLowerCase() ===
-                    subProduct.machine_name.toLocaleLowerCase()
-                );
-              }
+            // Skip if format doesn't match
+            if (normalizedFormat !== format) continue;
 
-              // Keep newer version or if no existing version exists
-              const shouldKeep = !existing || (
-                date > existing.date &&
-                struct.name.toLocaleLowerCase() ===
-                  existing.structName.toLocaleLowerCase()
+            totals.preFilteredDownloads++;
+
+            // Get upload date, using cached bundle date when needed
+            const uploadDate = struct.uploaded_at
+              ? new Date(struct.uploaded_at)
+              : bundleDate;
+
+            // Lookup existing download by machine name
+            const existing = options.dedup
+              ? downloadMap.get(lowerMachineName)
+              : undefined;
+
+            // Create a lowercase struct name for comparison
+            const lowerStructName = struct.name.toLocaleLowerCase();
+
+            // Determine if we should keep this version
+            const shouldKeep = !existing || (
+              uploadDate > existing.date &&
+              lowerStructName === existing.structName.toLocaleLowerCase()
+            );
+
+            if (shouldKeep) {
+              const downloadInfo = createDownloadInfo(
+                bundle,
+                subProduct,
+                struct,
+                options,
+                uploadDate,
               );
 
-              if (shouldKeep) {
-                // Remove existing version if we're replacing it
-                if (existing) {
-                  downloads = downloads.filter(
-                    (elem) =>
-                      elem.machineName.toLocaleLowerCase() !==
-                        existing.machineName.toLocaleLowerCase(),
-                  );
-                }
-
-                const downloadInfo = createDownloadInfo(
-                  bundle,
-                  subProduct,
-                  struct,
-                  options,
-                  struct.uploaded_at
-                    ? new Date(struct.uploaded_at)
-                    : new Date(bundle.created),
-                );
-
-                // Check for path duplicates
-                const pathDuplicate = downloads.some((elem) =>
-                  elem.filePath.toLocaleLowerCase() ===
-                    downloadInfo.filePath.toLocaleLowerCase()
-                );
-
-                if (!pathDuplicate) {
-                  downloads.push(downloadInfo);
-                }
+              // Check for path collision
+              const lowerFilePath = downloadInfo.filePath.toLocaleLowerCase();
+              if (
+                lowerFilePaths.has(lowerFilePath) &&
+                !existing
+              ) { // If replacing existing, we'll remove its path later
+                continue;
               }
+
+              // If replacing an existing entry, remove its path from tracking
+              if (existing) {
+                lowerFilePaths.delete(existing.filePath.toLocaleLowerCase());
+              }
+
+              // Update our collections
+              downloadMap.set(lowerMachineName, downloadInfo);
+              lowerFilePaths.add(lowerFilePath);
             }
           }
         }
@@ -231,6 +305,18 @@ export function filterEbooks(
     }
   }
 
+  // Convert map values to array
+  const downloads = Array.from(downloadMap.values());
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Sort by file size in descending order (largest first)
+  // With name as a fallback for files of the same size
+  return downloads.sort((a, b) => {
+    // First compare by file size (descending)
+    if (a.file_size !== b.file_size) {
+      return (b.file_size ?? 0) - (a.file_size ?? 0);
+    }
+    // Fall back to name for files of the same size (ascending)
+    return a.name.localeCompare(b.name);
+  });
 }

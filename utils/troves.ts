@@ -18,7 +18,7 @@ export async function filterTroves(
   queues: Queues,
 ): Promise<DownloadInfo[]> {
   progress.log(
-    `${yellow(troves.length.toString())} bundles containing downloadable items`,
+    `${yellow(troves.length.toString())} troves containing downloadable items`,
   );
   const downloads: DownloadInfo[] = [];
 
@@ -72,5 +72,15 @@ export async function filterTroves(
 
   await queues.orderInfo.done();
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Sort by file size in descending order (largest first)
+  // With name as a fallback for files of the same size
+  return downloads.sort((a, b) => {
+    // First compare by file size (descending)
+    if (a.file_size !== b.file_size) {
+      return (b.file_size ?? 0) - (a.file_size ?? 0);
+    }
+    // Fall back to name for files of the same size (ascending)
+    return a.name.localeCompare(b.name);
+  });
 }

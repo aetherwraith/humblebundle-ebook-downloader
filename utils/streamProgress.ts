@@ -4,14 +4,14 @@ import { formatBytes } from "./formatNumbers.ts";
 
 const streamProgress = {
   start() {
-    this.progressBar = this.progress.create(
-      this.size,
-      this.completed,
-      {
+    this.progressBar = this.progress.create({
+      total: this.size,
+      startValue: this.completed,
+      payload: {
         file: this.colour(`${this.operation}: ${basename(this.file)}`),
       },
-      formatBytes,
-    );
+      formatFn: formatBytes,
+    });
 
     // Track update time to avoid excessive UI updates
     this.lastUpdate = performance.now();
@@ -34,8 +34,9 @@ const streamProgress = {
     controller.enqueue(chunk);
   },
   flush() {
-    // Final update to ensure accuracy
-    this.progressBar.update(this.completed);
+    this.progress.remove(this.progressBar);
+  },
+  cancel() {
     this.progress.remove(this.progressBar);
   },
 };

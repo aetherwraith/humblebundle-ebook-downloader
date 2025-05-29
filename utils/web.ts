@@ -127,8 +127,12 @@ export async function getAllBundles(
 
     totals.bundles = gameKeys.length;
 
-    const progressBar = progress.create(gameKeys.length, 0, {
-      file: "Bundles",
+    const progressBar = progress.create({
+      total: gameKeys.length,
+      startValue: 0,
+      payload: {
+        file: "Bundles",
+      },
     });
 
     // Use a set to track processed keys and prevent duplicates

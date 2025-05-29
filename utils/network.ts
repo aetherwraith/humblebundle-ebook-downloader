@@ -36,7 +36,7 @@ async function checkConnectivity(): Promise<boolean> {
 /**
  * Start monitoring connectivity with automatic recovery attempts
  */
-export function startConnectivityMonitoring(): void {
+export function startConnectivityMonitoring(progress: MultiBar): void {
   if (connectivityCheckTimer !== null) return;
 
   connectivityCheckTimer = setInterval(async () => {
@@ -44,9 +44,9 @@ export function startConnectivityMonitoring(): void {
     isOnline = await checkConnectivity();
 
     if (wasOnline && !isOnline) {
-      console.log("⚠️ Network connection lost. Downloads may fail.");
+      progress.log("⚠️ Network connection lost. Downloads may fail.");
     } else if (!wasOnline && isOnline) {
-      console.log("✅ Network connection restored. Resuming operations.");
+      progress.log("✅ Network connection restored. Resuming operations.");
     }
   }, CONNECTIVITY_CHECK_INTERVAL) as unknown as number;
 }

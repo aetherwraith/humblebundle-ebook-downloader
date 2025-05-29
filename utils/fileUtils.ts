@@ -6,6 +6,7 @@ import { cacheFileName } from "./constants.ts";
 
 import { DownloadInfo, Options, Totals } from "../types/general.ts";
 import { Checksums } from "../types/bundle.ts";
+import { MultiBar } from "./progress.ts";
 
 /**
  * Read and parse a JSON file
@@ -52,6 +53,7 @@ export function writeJsonFileSync(
  */
 export async function loadChecksumCache(
   options: Options,
+  progress: MultiBar,
 ): Promise<Record<string, Checksums>> {
   // Load cache file of checksums
   const checksumCache: Record<string, Checksums> = await readJsonFile(
@@ -67,18 +69,18 @@ export async function loadChecksumCache(
   const signals = ["SIGINT", "SIGABRT", "SIGQUIT", "SIGTERM"];
   for (const signal of signals) {
     Deno.addSignalListener(signal, () => {
-      console.log(`Received ${signal}, saving cache...`);
+      progress.log(`Received ${signal}, saving cache...`);
       saveCache();
     });
   }
 
   // Handle unload event
   globalThis.addEventListener("unload", () => {
-    console.log("Unloading, saving cache...");
+    progress.log("Unloading, saving cache...");
     saveCache();
   });
 
-  console.log(
+  progress.log(
     `${green(Object.keys(checksumCache).length.toString())} checksums loaded`,
   );
   return checksumCache;
@@ -103,28 +105,29 @@ export async function clean(
   checksums: Record<string, Checksums>,
   options: Options,
   totals: Totals,
+  progress: MultiBar,
 ): Promise<void> {
-  console.log("Removing files...");
+  progress.log("Removing files...");
   for await (const file of walkExistingFiles(options)) {
     if (
       !filteredBundles.some((download) =>
         file.path.toLocaleLowerCase() === download.filePath.toLocaleLowerCase()
       )
     ) {
-      console.log(`Deleting extra file: ${file.path}`);
+      progress.log(`Deleting extra file: ${file.path}`);
       totals.removedFiles += 1;
       await Deno.remove(file.path);
     }
   }
 
-  console.log("Removing checksums from cache");
+  progress.log("Removing checksums from cache");
   Object.keys(checksums).forEach((fileName) => {
     if (
       !filteredBundles.some((download) =>
         fileName.toLocaleLowerCase() === download.fileName.toLocaleLowerCase()
       )
     ) {
-      console.log(`Removing checksum from cache: ${fileName}`);
+      progress.log(`Removing checksum from cache: ${fileName}`);
       totals.removedChecksums += 1;
       delete checksums[fileName];
     }

@@ -1,8 +1,6 @@
 /**
  * Progress bar implementation for Deno
  */
-
-import { gray } from "@std/fmt/colors";
 import { format } from "@std/fmt/duration";
 import { formatPercentage } from "./formatNumbers.ts";
 
@@ -15,28 +13,27 @@ export interface ProgressBarOptions {
   hideCursor?: boolean;
 }
 
-export interface MultiBarOptions extends ProgressBarOptions {
-  autopadding?: boolean;
-}
-
 export class SingleBar {
   private total: number;
   private current: number = 0;
-  private width: number;
-  private complete: string;
-  private incomplete: string;
-  private format: string;
-  private clearOnComplete: boolean;
-  private startTime: number;
-  private payload: Record<string, string>;
-  private formatFn: (value: number) => string;
-  private isMultiBar: boolean;
+  private readonly width: number;
+  private readonly complete: string;
+  private readonly incomplete: string;
+  private readonly format: string;
+  private readonly clearOnComplete: boolean;
+  private readonly startTime: number;
+  private readonly payload: Record<string, string>;
+  private readonly formatFn: (value: number) => string;
+  private readonly isMultiBar: boolean;
+  private readonly autoRemove: boolean;
+  private percentage: number = 0;
 
   constructor(
     options: ProgressBarOptions = {},
     payload: Record<string, string> = {},
     formatFn: (value: number) => string = (value: number) => value.toString(),
-    isMultiBar = false,
+    isMultiBar: boolean = false,
+    autoRemove: boolean = false,
   ) {
     this.total = 0;
     this.width = options.width ?? 40;
@@ -48,6 +45,7 @@ export class SingleBar {
     this.formatFn = formatFn;
     this.startTime = Date.now();
     this.isMultiBar = isMultiBar;
+    this.autoRemove = autoRemove;
   }
 
   setTotal(total: number): void {
@@ -75,6 +73,10 @@ export class SingleBar {
     }
   }
 
+  shouldRemove(): boolean {
+    return this.autoRemove && this.current === this.total;
+  }
+
   private render(): void {
     if (!this.isMultiBar) {
       const output = this.getOutput();
@@ -85,10 +87,10 @@ export class SingleBar {
   }
 
   getOutput() {
-    const percentage = this.total > 0
+    this.percentage = this.total > 0
       ? Math.round((this.current / this.total) * 100)
       : 0;
-    const completeLength = Math.round((percentage / 100) * this.width);
+    const completeLength = Math.round((this.percentage / 100) * this.width);
     const incompleteLength = this.width - completeLength;
 
     const bar = this.complete.repeat(completeLength) +
@@ -99,7 +101,12 @@ export class SingleBar {
     const eta = Math.round(timePerUnit * (this.total - this.current));
 
     const formatDuration = (ms: number): string => {
-      return ms > 0 ? format(ms, { ignoreZero: true, style: "narrow" }) : "0s";
+      return ms > 0
+        ? format(Math.round(ms / 1000) * 1000, {
+          ignoreZero: true,
+          style: "narrow",
+        })
+        : "0s";
     };
 
     const duration_formatted = formatDuration(elapsedTime);
@@ -109,7 +116,7 @@ export class SingleBar {
     output = output.replace("{bar}", bar);
     output = output.replace(
       "{percentage}",
-      formatPercentage(percentage.toString()),
+      formatPercentage(this.percentage.toString()),
     );
     output = output.replace("{value}", this.formatFn(this.current));
     output = output.replace("{total}", this.formatFn(this.total));
@@ -127,33 +134,48 @@ export class SingleBar {
   }
 }
 
+interface CreateParams {
+  total: number;
+  startValue: number;
+  payload?: Record<string, string>;
+  formatFn?: (value: number) => string;
+  autoRemove?: boolean;
+}
+
 export class MultiBar {
   private bars: SingleBar[] = [];
-  private options: MultiBarOptions;
-  private logLines: string[] = [];
+  private readonly options: ProgressBarOptions;
   private renderInterval: number | null = null;
+  private maxBars: number = 0;
+  private firstRender: boolean = true;
 
-  constructor(options: MultiBarOptions = {}) {
+  constructor(options: ProgressBarOptions = {}) {
     this.options = options;
     this.renderInterval = setInterval(
       () => this.render(),
-      1000,
+      100,
     ) as unknown as number;
   }
 
   create(
-    total: number,
-    startValue: number,
-    payload: Record<string, string> = {},
-    formatFn: (value: number) => string = (value: number) => value.toString(),
+    { total, startValue, payload = {}, formatFn, autoRemove = false }:
+      CreateParams,
   ): SingleBar {
-    const bar = new SingleBar(this.options, payload, formatFn, true);
+    const bar = new SingleBar(
+      this.options,
+      payload,
+      formatFn,
+      true,
+      autoRemove,
+    );
     bar.setTotal(total);
     if (startValue > 0) {
       bar.update(startValue);
     }
     this.bars.push(bar);
-    console.log(""); // Add a line for each new bar
+    if (this.bars.length > this.maxBars) {
+      this.maxBars = this.bars.length;
+    }
     return bar;
   }
 
@@ -165,8 +187,20 @@ export class MultiBar {
   }
 
   log(message: string): void {
-    this.logLines.push(message);
-    console.log(gray(message));
+    let output = "\u001b[1A\u001b[2K".repeat(this.bars.length ? this.maxBars : 0);
+    output = output + this.bars.length + ":" + this.maxBars + " bob " + message + "\n";
+    for (const bar of this.bars) {
+      const barOutput = bar.getOutput();
+      if (bar.shouldRemove()) {
+        this.remove(bar);
+        continue;
+      }
+      if (barOutput.trim().length > 0) {
+        output = output + bar.getOutput() + "\n";
+      }
+    }
+
+    console.log(this.maxBars > 0 ? output.slice(0, -1) : output);
   }
 
   stop(): void {
@@ -174,25 +208,25 @@ export class MultiBar {
       clearInterval(this.renderInterval);
       this.renderInterval = null;
     }
-    for (const bar of this.bars) {
-      bar.stop();
-    }
     this.bars = [];
   }
 
   private render(): void {
-    // for (let i = 1; i <= this.bars.length; i++) {
-    //   console.log("\u001b[1A\u001b[2K");
-    // }
-
     let output = "";
-
-    for (const _ of this.bars) {
-      output += "\u001b[1A\u001b[2K"
+    if (this.firstRender) {
+      this.firstRender = false;
+    } else {
+      output = "\u001b[1A\u001b[2K".repeat(this.maxBars);
     }
-
     for (const bar of this.bars) {
-      output += bar.getOutput() + "\n";
+      const barOutput = bar.getOutput();
+      if (bar.shouldRemove()) {
+        this.remove(bar);
+        continue;
+      }
+      if (barOutput.trim().length > 0) {
+        output = output + bar.getOutput() + "\n";
+      }
     }
 
     console.log(output.slice(0, -1));

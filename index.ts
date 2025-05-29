@@ -58,13 +58,16 @@ async function main() {
   });
 
   // Add a blank line to start progress display
-  console.log("");
+  progress.log("");
 
   // Start network connectivity monitoring
   startConnectivityMonitoring(progress);
 
   // Load checksum cache
-  const checksums: Record<string, Checksums> = await loadChecksumCache(options);
+  const checksums: Record<string, Checksums> = await loadChecksumCache(
+    options,
+    progress,
+  );
   totals.checksumsLoaded = Object.keys(checksums).length;
 
   // Handle process signals
@@ -84,8 +87,13 @@ async function main() {
         `Calculating checksums of all files in ${options.downloadFolder}`,
       );
 
-      const checksumProgress = progress.create(0, 0, {
-        file: "File Hash Queue",
+      const checksumProgress = progress.create({
+        total: 0,
+        startValue: 0,
+        payload: {
+          file: "File Hash Queue",
+        },
+        autoRemove: true,
       });
 
       const processFile = (file: WalkEntry) => {
@@ -120,7 +128,7 @@ async function main() {
       break;
     }
     case COMMANDS.all: {
-      console.log("Downloading all bundles...");
+      progress.log("Downloading all bundles...");
       const bundles = await getAllBundles(options, totals, queues, progress);
       filteredBundles = filterBundles(bundles, options, totals, progress);
       downloadItems(filteredBundles, progress, checksums, queues, totals);
@@ -141,16 +149,23 @@ async function main() {
     }
   }
 
+  // Filtered bundles are saved to a file for later use
+  await writeJsonFile(
+    options.downloadFolder,
+    "filteredBundles.json",
+    filteredBundles,
+  );
+
   // Wait for queues to complete
   await Promise.all(Object.values(queues).map((queue) => queue.done()));
-  progress.stop();
-  await clean(filteredBundles, checksums, options, totals);
-
+  if (options.command?.toLowerCase() !== COMMANDS.checksums) {
+    await clean(filteredBundles, checksums, options, totals, progress);
+  }
   // Stop network monitoring before exit
   stopConnectivityMonitoring();
-
-  console.log("Execution completed with the following statistics:");
-  console.log(totals);
+  progress.log("Execution completed with the following statistics:");
+  progress.log(JSON.stringify(totals));
+  progress.stop();
 }
 
 // Run the main function

@@ -28,11 +28,12 @@ export async function checksum(
 ): Promise<Checksums> {
   const filePath = resolve(file);
   const { size } = await Deno.stat(filePath);
-  const fileStream = await Deno.open(filePath, { read: true });
+  using fileStream = await Deno.open(filePath, { read: true });
   const pipedStreams = fileStream.readable.pipeThrough(
     new StreamProgress(size, file, progress, "Hashing", yellow),
   );
-  return computeFileHash(pipedStreams);
+  const fileHash = await computeFileHash(pipedStreams);
+  return fileHash;
 }
 
 export async function checkSignatureMatch(

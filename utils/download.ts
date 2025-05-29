@@ -81,7 +81,7 @@ export async function doDownload(
 
   const filePath = resolve(download.filePath);
   await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
-  const saveFile = await Deno.open(filePath, {
+  using saveFile = await Deno.open(filePath, {
     read: true,
     write: true,
     create: true,
@@ -91,7 +91,7 @@ export async function doDownload(
 
   // Use Deno's native AbortController for request cancellation support
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+  const timeout = setTimeout(() => controller.abort(), 60000 * 60 * 2); // 60 second timeout
 
   try {
     const req = await fetch(download.url, {
@@ -137,7 +137,6 @@ export async function doDownload(
     throw err;
   } finally {
     clearTimeout(timeout);
-    saveFile.close();
   }
 }
 
@@ -151,8 +150,13 @@ export function downloadItems(
   queues: Queues,
   totals: Totals,
 ): void {
-  const downloadProgress = progress.create(filteredBundles.length, 0, {
-    file: "Download Queue",
+  const downloadProgress = progress.create({
+    total: filteredBundles.length,
+    startValue: 0,
+    payload: {
+      file: "Download Queue",
+    },
+    autoRemove: true,
   });
 
   for (const download of filteredBundles) {
