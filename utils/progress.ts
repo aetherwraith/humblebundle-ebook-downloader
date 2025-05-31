@@ -148,6 +148,7 @@ export class MultiBar {
   private renderInterval: number | null = null;
   private maxBars: number = 0;
   private firstRender: boolean = true;
+  private barsRendered: number = 0;
 
   constructor(options: ProgressBarOptions = {}) {
     this.options = options;
@@ -187,9 +188,11 @@ export class MultiBar {
   }
 
   log(message: string): void {
-    let output = "\u001b[1A\u001b[2K".repeat(this.bars.length ? this.maxBars : 0);
-    output = output + this.bars.length + ":" + this.maxBars + " bob " + message + "\n";
+    let output = "\u001b[1A\u001b[2K".repeat(this.bars.length ? this.barsRendered : 0);
+    output = output + this.bars.length + ":" + this.barsRendered + ":" + this.maxBars + " bob " + message + "\n";
+    this.barsRendered = 0;
     for (const bar of this.bars) {
+      this.barsRendered += 1;
       const barOutput = bar.getOutput();
       if (bar.shouldRemove()) {
         this.remove(bar);
@@ -216,16 +219,18 @@ export class MultiBar {
     if (this.firstRender) {
       this.firstRender = false;
     } else {
-      output = "\u001b[1A\u001b[2K".repeat(this.maxBars);
+      output = "\u001b[1A\u001b[2K".repeat(this.barsRendered);
     }
+    this.barsRendered = 0;
     for (const bar of this.bars) {
+      this.barsRendered += 1;
       const barOutput = bar.getOutput();
       if (bar.shouldRemove()) {
         this.remove(bar);
         continue;
       }
       if (barOutput.trim().length > 0) {
-        output = output + bar.getOutput() + "\n";
+        output = output + bar.getOutput() + " " + this.bars.length + ":" + this.barsRendered + ":" + this.maxBars + "\n";
       }
     }
 

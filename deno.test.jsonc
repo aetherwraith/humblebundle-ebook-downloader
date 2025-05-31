@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "test": "deno test --allow-read --allow-write --allow-net tests/",
+    "test:coverage": "deno test --coverage=coverage --allow-read --allow-write --allow-net tests/ && deno coverage coverage"
+  },
+  "imports": {
+    "@std/testing/": "https://deno.land/std/testing/"
+  }
+}

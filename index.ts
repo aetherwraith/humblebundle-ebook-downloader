@@ -54,7 +54,6 @@ async function main() {
   // Setup progress bar
   const progress = new MultiBar({
     ...ShadesClassicPreset,
-    autopadding: true,
   });
 
   // Add a blank line to start progress display
