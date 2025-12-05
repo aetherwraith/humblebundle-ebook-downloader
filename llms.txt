@@ -1,0 +1,48 @@
+# Humble Bundle Ebook Downloader
+
+## Description
+An easy way to download ebooks from your Humble Bundle account. This tool can be run via NPM or Docker.
+
+## Tech Stack
+- **Runtime**: Deno
+- **Language**: TypeScript
+- **Dependencies**: 
+  - `@henrygd/queue` (concurrency)
+  - `@std/*` (standard library)
+  - `cli-progress` (progress bars)
+
+## Project Structure
+
+### Entry Point
+- **`index.ts`**: The main entry point. Handles argument parsing, queue initialization, and command dispatching.
+
+### Configuration
+- **`deno.json`**: Deno configuration file, including imports and version.
+
+### Directories
+- **`utils/`**: Contains utility functions and logic.
+  - `constants.ts`: Global constants, command definitions, and default options.
+  - `download.ts`: Logic for downloading items.
+  - `web.ts`: Functions for interacting with the Humble Bundle API.
+  - `troves.ts`: Handling of Humble Trove downloads.
+  - `fileUtils.ts`: File system operations (cleaning, loading checksums).
+  - `checksums.ts`: Checksum calculation logic.
+- **`types/`**: TypeScript type definitions.
+  - `bundle.ts`: Types related to Humble Bundles and their contents.
+  - `general.ts`: General application types (Options, DownloadInfo).
+
+## Commands
+The tool supports the following commands (defined in `utils/constants.ts`):
+- `ebooks`: Download ebooks.
+- `all`: Download all bundles.
+- `trove`: Download Humble Trove items.
+- `checksums`: Calculate checksums of existing files.
+- `cleanup` / `cleanupEbooks`: Organize and clean up downloaded files.
+
+## Usage
+`humblebundle-ebook-downloader [options]`
+Common options:
+- `-d, --download-folder`: Output directory.
+- `--auth-token`: Authentication cookie (`_simpleauth_sess`).
+- `-l, --download-limit`: Parallel download limit.
+- `-f, --format`: Ebook formats (cbz, epub, mobi, pdf, pdf_hd).
