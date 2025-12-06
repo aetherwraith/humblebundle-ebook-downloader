@@ -207,7 +207,7 @@ export class SingleBarWrapper {
     const etaStr = (this.value > 0) ? formatTime(etaSeconds) : "--:--";
 
     const pct = this.total > 0 ? this.value / this.total : 0;
-    const percent = Math.min(Math.max(pct * 100, 0), 100).toFixed(2);
+    const percent = Math.min(Math.max(pct * 100, 0), 100).toFixed(2).padStart(6, " ");
     
     const type = this.payload.type || "number";
     let stats = "";
