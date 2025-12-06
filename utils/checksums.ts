@@ -4,7 +4,7 @@ import { encodeHex } from "@std/encoding/hex";
 import { yellow } from "@std/fmt/colors";
 import { exists } from "@std/fs/exists";
 import { resolve } from "@std/path";
-import type { MultiBar } from "cli-progress";
+import { MultiBarWrapper } from "./progressWrapper.ts";
 import { StreamProgress } from "./streamProgress.ts";
 
 import { DownloadInfo, Totals } from "../types/general.ts";
@@ -15,8 +15,8 @@ export async function computeFileHash(
 ): Promise<Checksums> {
   const [shaStream, md5Stream] = stream.tee();
   const [shaHashBuffer, md5HashBuffer] = await Promise.all([
-    crypto.subtle.digest("SHA-1", shaStream),
-    crypto.subtle.digest("MD5", md5Stream),
+    crypto.subtle.digest("SHA-1", shaStream as unknown as AsyncIterable<BufferSource>),
+    crypto.subtle.digest("MD5", md5Stream as unknown as AsyncIterable<BufferSource>),
   ]);
   return {
     sha1: encodeHex(shaHashBuffer),
@@ -26,7 +26,7 @@ export async function computeFileHash(
 
 export async function checksum(
   file: string,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
 ): Promise<Checksums> {
   const filePath = resolve(file);
   const { size } = await Deno.stat(filePath);
@@ -40,7 +40,7 @@ export async function checksum(
 export async function checkSignatureMatch(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
   totals: Totals,
 ): Promise<boolean> {
   if (!(await exists(download.filePath))) return false;
@@ -59,7 +59,7 @@ async function getOrComputeChecksum(
   fileName: string,
   filePath: string,
   checksums: Record<string, Checksums>,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
   totals: Totals,
 ): Promise<Checksums> {
   if (checksums[fileName]?.md5 && checksums[fileName]?.sha1) {

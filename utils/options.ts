@@ -65,6 +65,8 @@ function initializeOptionsToSave(): Options {
     platform: [],
     authToken: "",
     downloadFolder: "",
+    productFolders: false,
+    humanFileNames: false,
   };
 }
 

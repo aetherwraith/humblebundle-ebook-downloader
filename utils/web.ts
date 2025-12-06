@@ -1,4 +1,4 @@
-import type { MultiBar, SingleBar } from "cli-progress";
+import { MultiBarWrapper, SingleBarWrapper } from "./progressWrapper.ts";
 import { userAgent } from "./constants.ts";
 import { writeJsonFile } from "./fileUtils.ts";
 
@@ -40,7 +40,7 @@ export async function getAllBundles(
   options: Options,
   totals: Totals,
   queues: Queues,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
 ) {
   const orderResponse = await fetch(`${BASE_URL}${ORDER_PATH}`, {
     headers: getRequestHeaders(options),
@@ -48,7 +48,7 @@ export async function getAllBundles(
   const gameKeys: GameKey[] = await orderResponse.json();
   totals.bundles = gameKeys.length;
 
-  const progressBar: SingleBar = progress.create(gameKeys.length, 0, {
+  const progressBar: SingleBarWrapper = progress.create(gameKeys.length, 0, {
     file: "Bundles",
   });
   const bundles: Bundle[] = [];

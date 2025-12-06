@@ -2,8 +2,9 @@ import { newQueue } from "@henrygd/queue";
 import { parseArgs } from "@std/cli/parse-args";
 import { WalkEntry } from "@std/fs/walk";
 import * as log from "@std/log";
-import type { MultiBar } from "cli-progress";
-import cliProgress from "cli-progress";
+// import type { MultiBar } from "cli-progress";
+// import cliProgress from "cli-progress";
+import { MultiBarWrapper } from "./utils/progressWrapper.ts";
 import { checksum } from "./utils/checksums.ts";
 import { COMMANDS, parseOptions } from "./utils/constants.ts";
 import { downloadItems } from "./utils/download.ts";
@@ -45,7 +46,7 @@ const totals: Totals = {
 };
 
 // Setup progress bar
-const progress: MultiBar = new cliProgress.MultiBar(
+const progress = new MultiBarWrapper(
   {
     clearOnComplete: true,
     format:
@@ -55,7 +56,6 @@ const progress: MultiBar = new cliProgress.MultiBar(
     etaAsynchronousUpdate: true,
     autopadding: true,
   },
-  cliProgress.Presets.shades_classic,
 );
 
 // Load checksum cache
@@ -98,7 +98,7 @@ switch (options.command?.toLowerCase()) {
   }
   case COMMANDS.cleanup: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    filteredBundles = filterBundles(bundles, options, totals, progress);
+    filteredBundles = await filterBundles(bundles, options, totals, progress, queues);
     break;
   }
   case COMMANDS.cleanupEbooks: {
@@ -114,7 +114,7 @@ switch (options.command?.toLowerCase()) {
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    filteredBundles = filterBundles(bundles, options, totals, progress);
+    filteredBundles = await filterBundles(bundles, options, totals, progress, queues);
     downloadItems(filteredBundles, progress, checksums, queues, totals);
     break;
   }

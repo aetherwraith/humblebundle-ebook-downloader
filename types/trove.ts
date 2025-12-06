@@ -41,6 +41,7 @@ export interface Downloads {
   windows: Download;
   mac?: Download;
   linux?: Download;
+  [key: string]: Download | undefined;
 }
 
 export interface Download {

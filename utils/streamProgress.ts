@@ -1,44 +1,33 @@
 import { basename } from "@std/path/basename";
-import type { MultiBar } from "cli-progress";
-import { formatFileSize } from "./formatNumbers.ts";
+import { MultiBarWrapper, SingleBarWrapper } from "./progressWrapper.ts";
 
-const streamProgress = {
-  start() {
-    this.progressBar = this.progress.create(
-      this.size,
-      this.completed,
-      {
-        file: this.colour(`${this.operation}: ${basename(this.file)}`),
-      },
-      { formatValue: formatFileSize },
-    );
-  },
-  transform(chunk, controller) {
-    this.completed += chunk.byteLength;
-    this.progressBar.increment(chunk.byteLength);
-    controller.enqueue(chunk);
-  },
-  flush() {
-    this.progress.remove(this.progressBar);
-  },
-};
-
-export class StreamProgress extends TransformStream {
+export class StreamProgress extends TransformStream<Uint8Array, Uint8Array> {
   constructor(
     size: number,
     file: string,
-    progress: MultiBar,
+    progress: MultiBarWrapper,
     operation: string,
-    colour: Function,
+    colour: (str: string) => string,
   ) {
+    let progressBar: SingleBarWrapper;
+    let completed = 0;
+
     super({
-      ...streamProgress,
-      size,
-      file,
-      progress,
-      operation,
-      colour,
-      completed: 0,
+      start() {
+        progressBar = progress.create(size, 0, {
+          file: colour(`${operation}: ${basename(file)}`),
+          type: "bytes",
+        });
+      },
+      transform(chunk: Uint8Array, controller: TransformStreamDefaultController<Uint8Array>) {
+        completed += chunk.byteLength;
+        progressBar.increment(chunk.byteLength);
+        controller.enqueue(chunk);
+      },
+      flush() {
+        progress.remove(progressBar);
+      },
     });
   }
 }
+

@@ -1,7 +1,7 @@
 import { retry, RetryError } from "@std/async";
 import { cyan } from "@std/fmt/colors";
 import { resolve } from "@std/path/resolve";
-import type { MultiBar, SingleBar } from "cli-progress";
+import { MultiBarWrapper, SingleBarWrapper } from "./progressWrapper.ts";
 import { checkSignatureMatch, computeFileHash } from "./checksums.ts";
 import { retryOptions } from "./constants.ts";
 import { StreamProgress } from "./streamProgress.ts";
@@ -12,8 +12,8 @@ import { Checksums } from "../types/bundle.ts";
 export async function downloadItem(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
-  progress: MultiBar,
-  downloadProgress: SingleBar,
+  progress: MultiBarWrapper,
+  downloadProgress: SingleBarWrapper,
   totals: Totals,
 ): Promise<void> {
   if (
@@ -39,7 +39,7 @@ export async function downloadItem(
 
 export async function doDownload(
   download: DownloadInfo,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
   checksums: Record<string, Checksums>,
 ) {
   const filePath = resolve(download.filePath);
@@ -52,7 +52,10 @@ export async function doDownload(
   const fileStream = saveFile.writable;
   const req = await fetch(download.url);
   const size = Number(req.headers.get("content-length"));
-  const downloadStream = req.body?.pipeThrough(
+  if (!req.body) {
+      throw new Error("Response body is empty");
+  }
+  const downloadStream = req.body.pipeThrough(
     new StreamProgress(size, download.filePath, progress, "Downloading", cyan),
   );
   const [writeStream, checksumStream] = downloadStream.tee();
@@ -65,7 +68,7 @@ export async function doDownload(
 
 export function downloadItems(
   filteredBundles: DownloadInfo[],
-  progress: MultiBar,
+  progress: MultiBarWrapper,
   checksums: Record<string, Checksums>,
   queues: Queues,
   totals: Totals,

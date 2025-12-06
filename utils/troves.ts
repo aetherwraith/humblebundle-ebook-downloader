@@ -1,6 +1,6 @@
 import { yellow } from "@std/fmt/colors";
 import { basename, resolve } from "@std/path";
-import type { MultiBar } from "cli-progress";
+import { MultiBarWrapper } from "./progressWrapper.ts";
 import sanitizeFilename from "sanitize-filename";
 
 import { DownloadInfo, Options, Queues, Totals } from "../types/general.ts";
@@ -11,7 +11,7 @@ export async function filterTroves(
   troves: Trove[],
   options: Options,
   totals: Totals,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
   queues: Queues,
 ) {
   progress.log(
@@ -27,9 +27,11 @@ export async function filterTroves(
     troves.forEach((trove) => {
       if (Object.hasOwn(trove.downloads, platform)) {
         queues.orderInfo.add(async () => {
+          const download = trove.downloads[platform];
+          if (!download) return; 
           const url = await getTroveURL(
-            trove.downloads[platform].machine_name,
-            trove.downloads[platform].url.web,
+            download.machine_name,
+            download.url.web,
             options,
           );
           const fileName = sanitizeFilename(basename(url.pathname));
@@ -41,16 +43,16 @@ export async function filterTroves(
           downloads.push({
             bundle: trove["human-name"],
             name: trove["human-name"],
-            machineName: trove.downloads[platform].machine_name,
+            machineName: download.machine_name,
             fileName,
             downloadPath,
             filePath,
             url,
-            sha1: trove.downloads[platform].sha1,
-            md5: trove.downloads[platform].md5,
+            sha1: download.sha1,
+            md5: download.md5,
             structName: fileName,
-            date: new Date(trove.downloads[platform].uploaded_at || trove.downloads[platform].timestamp * 1000 || trove["date-added"] * 1000),
-            file_size: trove.downloads[platform].file_size,
+            date: new Date(download.uploaded_at || download.timestamp * 1000 || trove["date-added"] * 1000),
+            file_size: download.file_size,
           });
         });
       }

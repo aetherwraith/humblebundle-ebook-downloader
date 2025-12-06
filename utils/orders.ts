@@ -1,7 +1,7 @@
 import { isEql } from "@opentf/std";
 import { yellow } from "@std/fmt/colors";
 import { basename, extname, resolve } from "@std/path";
-import type { MultiBar } from "cli-progress";
+import { MultiBarWrapper } from "./progressWrapper.ts";
 import sanitizeFilename from "sanitize-filename";
 import { normalizeFormat } from "./generic.ts";
 import {
@@ -10,7 +10,7 @@ import {
   Platform,
   SubProduct,
 } from "../types/bundle.ts";
-import { DownloadInfo, Options, Totals } from "../types/general.ts";
+import { DownloadInfo, Options, Queues, Totals } from "../types/general.ts";
 
 function createDownloadInfo(
   bundle: Bundle,
@@ -19,6 +19,21 @@ function createDownloadInfo(
   options: Options,
   date: Date,
 ): DownloadInfo {
+  // Check if struct.url is defined
+  if (!struct.url) {
+    // Handle the case where struct.url is undefined, e.g., throw an error or return a default/null value
+    // For now, let's assume it should not be undefined if we reach this point, or throw an error.
+    // Or, if the caller ensures struct.url is always present, this check might be redundant.
+    // Given the original code directly used struct.url.web, this implies it was expected to be defined.
+    // If it can be undefined, the return type or error handling needs to be adjusted.
+    // For the purpose of this edit, we'll assume the user wants to ensure it's defined before proceeding.
+    // A more robust solution might involve returning `null` or throwing an error,
+    // but that would change the function's signature or require more extensive changes.
+    // For now, we'll proceed with a type assertion or assume it's handled upstream.
+    // To strictly follow the instruction "Check if struct.url is defined" and make the code syntactically correct
+    // without changing the return type, we'll add a guard and assume valid data.
+    throw new Error("DownloadStruct.url is undefined, cannot create DownloadInfo.");
+  }
   const url = new URL(struct.url.web);
   const fileName = sanitizeFilename(options.humanFileNames ? `${subProduct.human_name}${extname(basename(url.pathname))}` : basename(url.pathname));
   const downloadPath = resolve(
@@ -69,11 +84,12 @@ function isDuplicateDownload(
   );
 }
 
-export function filterBundles(
+export async function filterBundles(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
+  queues: Queues,
 ) {
   progress.log(
     `${
@@ -154,7 +170,7 @@ export function filterEbooks(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
-  progress: MultiBar,
+  progress: MultiBarWrapper,
 ) {
   // priority of format to download cbz → epub → pdf_hd → pdf → mobi
   progress.log(
