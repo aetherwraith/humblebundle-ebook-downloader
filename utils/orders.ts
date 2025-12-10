@@ -10,7 +10,7 @@ import {
   Platform,
   SubProduct,
 } from "../types/bundle.ts";
-import { DownloadInfo, Options, Queues, Totals } from "../types/general.ts";
+import { DownloadInfo, Options, Totals } from "../types/general.ts";
 
 function createDownloadInfo(
   bundle: Bundle,
@@ -84,12 +84,11 @@ function isDuplicateDownload(
   );
 }
 
-export async function filterBundles(
+export function filterBundles(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
   progress: MultiBarWrapper,
-  queues: Queues,
 ) {
   progress.log(
     `${
