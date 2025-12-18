@@ -162,7 +162,7 @@ export function filterBundles(
   });
 
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+  return downloads.sort((a, b) => (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name));
 }
 
 export function filterEbooks(
@@ -255,5 +255,5 @@ export function filterEbooks(
     });
   });
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+  return downloads.sort((a, b) => (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name));
 }

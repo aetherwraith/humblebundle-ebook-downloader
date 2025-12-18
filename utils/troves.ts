@@ -60,5 +60,5 @@ export async function filterTroves(
   });
   await queues.orderInfo.done();
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) => a.name.localeCompare(b.name));
+  return downloads.sort((a, b) => (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name));
 }

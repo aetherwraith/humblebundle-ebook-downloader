@@ -98,7 +98,7 @@ switch (options.command?.toLowerCase()) {
   }
   case COMMANDS.cleanup: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    filteredBundles = await filterBundles(bundles, options, totals, progress, queues);
+    filteredBundles = await filterBundles(bundles, options, totals, progress);
     break;
   }
   case COMMANDS.cleanupEbooks: {
@@ -114,7 +114,7 @@ switch (options.command?.toLowerCase()) {
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
-    filteredBundles = await filterBundles(bundles, options, totals, progress, queues);
+    filteredBundles = await filterBundles(bundles, options, totals, progress);
     downloadItems(filteredBundles, progress, checksums, queues, totals);
     break;
   }
