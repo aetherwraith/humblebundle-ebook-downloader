@@ -10,6 +10,7 @@ import { COMMANDS, parseOptions } from "./utils/constants.ts";
 import { downloadItems } from "./utils/download.ts";
 import {
   clean,
+  deleteEmptyFolders,
   loadChecksumCache,
   walkExistingFiles,
   writeJsonFile,
@@ -141,5 +142,8 @@ await writeJsonFile(
 await Promise.all(Object.values(queues).map((queue) => queue.done()));
 progress.stop();
 await clean(filteredBundles, checksums, options, totals);
+
+// Clean up empty folders
+await deleteEmptyFolders(options.downloadFolder);
 
 log.info(totals);

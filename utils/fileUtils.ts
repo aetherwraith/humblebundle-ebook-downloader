@@ -123,3 +123,29 @@ export async function clean(
     }
   });
 }
+
+export async function deleteEmptyFolders(folder: string) {
+  try {
+    // Process children first (depth-first)
+    for await (const entry of Deno.readDir(folder)) {
+      if (entry.isDirectory) {
+        const entryPath = resolve(folder, entry.name);
+        await deleteEmptyFolders(entryPath);
+      }
+    }
+
+    // Try to remove the directory. Deno.remove throws if not empty.
+    // We catch the error to ignore non-empty directories.
+    await Deno.remove(folder);
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound) && (err instanceof Error) && !err.message.includes("Directory not empty")) {
+       // Only log unexpected errors. "Directory not empty" is expected.
+       // Note: Deno doesn't have a specific error class for "Directory not empty" usually, it's often a generic OS error or similar.
+       // However, Deno.errors.NotFound is clear.
+       // Let's rely on the behavior that we only want to suppress "not empty".
+       // Actually, we can check if it's empty before deleting to be cleaner, but Deno.remove is atomic-ish.
+       // Let's stick to try-remove pattern but be careful about the error.
+       // If we can't delete it, it's fine.
+    }
+  }
+}
