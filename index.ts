@@ -59,27 +59,16 @@ const progress = new MultiBarWrapper(
   },
 );
 
-async function onExit() {
-  await Promise.all(Object.values(queues).map((queue) => queue.done()));
-  progress.stop();
-  await clean(filteredBundles, checksums, options, totals);
-
-  // Clean up empty folders
-  await deleteEmptyFolders(options.downloadFolder);
-
-  log.info(totals);
-}
-
 // Load checksum cache
 const checksums: Record<string, Checksums> = await loadChecksumCache(options);
 totals.checksumsLoaded = Object.keys(checksums).length;
 
 // Handle process signals
-Deno.addSignalListener("SIGINT", async () => {
+Deno.addSignalListener("SIGINT", () => {
   for (const queue of Object.values(queues)) {
     queue.clear();
   }
-  await onExit();
+  progress.stop();
 });
 
 let filteredBundles: DownloadInfo[] = [];
@@ -150,4 +139,11 @@ await writeJsonFile(
   "filteredBundles.json",
   filteredBundles,
 );
-await onExit();
+await Promise.all(Object.values(queues).map((queue) => queue.done()));
+progress.stop();
+await clean(filteredBundles, checksums, options, totals);
+
+// Clean up empty folders
+await deleteEmptyFolders(options.downloadFolder);
+
+log.info(totals);
