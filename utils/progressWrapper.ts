@@ -19,10 +19,27 @@ export class MultiBarWrapper {
   private lastRender = 0;
   private renderTimeout: number | undefined;
   private renderPromise: Promise<void> = Promise.resolve();
+  
+  // Store original console methods
+  private originalConsole = {
+    log: console.log,
+    warn: console.warn,
+    error: console.error,
+    info: console.info,
+  };
 
   constructor(_options: { clearOnComplete?: boolean; format?: string; [key: string]: unknown }) {
-      // Options are largely ignored in manual implementation for simplicity, 
-      // or can be used to customize the manual render string.
+    // Patch console methods to route through this.log
+    const patch = (method: "log" | "warn" | "error" | "info") => {
+      console[method] = (...args: unknown[]) => {
+        this.log(...args);
+      };
+    };
+
+    patch("log");
+    patch("warn");
+    patch("error");
+    patch("info");
   }
 
   create(total: number, startValue: number, payload: Payload = {}): SingleBarWrapper {
@@ -44,7 +61,7 @@ export class MultiBarWrapper {
     // Clear current bars
     this.clearBars();
     // Log message
-    console.log(messages.join(" "));
+    this.originalConsole.log(messages.join(" "));
     // Reset line count since we are now at a "fresh" line
     this.lastLineCount = 0;
     // Re-render
@@ -52,6 +69,12 @@ export class MultiBarWrapper {
   }
 
   stop() {
+    // Restore console methods
+    console.log = this.originalConsole.log;
+    console.warn = this.originalConsole.warn;
+    console.error = this.originalConsole.error;
+    console.info = this.originalConsole.info;
+
     // When done, we might want to leave the bars on screen or clear them?
     // Usually keep them.
     // Ensure one final render to show 100%

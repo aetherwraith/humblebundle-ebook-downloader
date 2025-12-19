@@ -15,7 +15,13 @@ export async function downloadItem(
   progress: MultiBarWrapper,
   downloadProgress: SingleBarWrapper,
   totals: Totals,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (
+    signal?.aborted
+  ) {
+    return;
+  }
   if (
     !(await checkSignatureMatch(download, checksums, progress, totals))
   ) {
@@ -23,7 +29,7 @@ export async function downloadItem(
 
     await retry(
       async () =>
-        await doDownload(download, progress, checksums).catch((err) => {
+        await doDownload(download, progress, checksums, signal).catch((err) => {
           if (err instanceof RetryError) {
             progress.log("Retry error :", err.message);
             progress.log("Error cause :", err.cause);
@@ -41,6 +47,7 @@ export async function doDownload(
   download: DownloadInfo,
   progress: MultiBarWrapper,
   checksums: Record<string, Checksums>,
+  signal?: AbortSignal,
 ) {
   const filePath = resolve(download.filePath);
   await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
@@ -50,7 +57,7 @@ export async function doDownload(
     create: true,
   });
   const fileStream = saveFile.writable;
-  const req = await fetch(download.url);
+  const req = await fetch(download.url, { signal });
   const size = Number(req.headers.get("content-length"));
   if (!req.body) {
       throw new Error("Response body is empty");
@@ -72,6 +79,7 @@ export function downloadItems(
   checksums: Record<string, Checksums>,
   queues: Queues,
   totals: Totals,
+  signal?: AbortSignal,
 ) {
   const downloadProgress = progress.create(filteredBundles.length, 0, {
     file: "Download Queue",
@@ -84,6 +92,7 @@ export function downloadItems(
         progress,
         downloadProgress,
         totals,
+        signal,
       )
     );
   }

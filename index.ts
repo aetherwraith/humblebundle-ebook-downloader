@@ -64,11 +64,22 @@ const checksums: Record<string, Checksums> = await loadChecksumCache(options);
 totals.checksumsLoaded = Object.keys(checksums).length;
 
 // Handle process signals
+const abortController = new AbortController();
+const signal = abortController.signal;
+
 Deno.addSignalListener("SIGINT", () => {
+  log.warn("\nSIGINT received. Exiting...");
+  abortController.abort();
+  
   for (const queue of Object.values(queues)) {
-    queue.clear();
+    try {
+      queue.clear();
+    } catch (err) {
+      // Ignore errors when clearing queues during shutdown
+    }
   }
   progress.stop();
+  Deno.exit(0);
 });
 
 let filteredBundles: DownloadInfo[] = [];
@@ -110,13 +121,13 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.ebooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     filteredBundles = filterEbooks(bundles, options, totals, progress);
-    downloadItems(filteredBundles, progress, checksums, queues, totals);
+    downloadItems(filteredBundles, progress, checksums, queues, totals, signal);
     break;
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     filteredBundles = await filterBundles(bundles, options, totals, progress);
-    downloadItems(filteredBundles, progress, checksums, queues, totals);
+    downloadItems(filteredBundles, progress, checksums, queues, totals, signal);
     break;
   }
   case COMMANDS.trove: {
@@ -129,7 +140,7 @@ switch (options.command?.toLowerCase()) {
       progress,
       queues,
     );
-    downloadItems(filteredBundles, progress, checksums, queues, totals);
+    downloadItems(filteredBundles, progress, checksums, queues, totals, signal);
   }
 }
 
