@@ -1,4 +1,3 @@
-import { isEql } from "@opentf/std";
 import { green } from "@std/fmt/colors";
 import { walk } from "@std/fs/walk";
 import * as log from "@std/log";
@@ -93,30 +92,29 @@ export async function clean(
   totals: Totals,
 ) {
   log.info("Removing files...");
+  
+  // Create a Set of allowed file paths for O(1) lookup
+  const allowedPaths = new Set(
+    filteredBundles.map((d) => d.filePath.toLocaleLowerCase())
+  );
+
   for await (const file of walkExistingFiles(options)) {
-    if (
-      !filteredBundles.some((download) =>
-        isEql(
-          file.path.toLocaleLowerCase(),
-          download.filePath.toLocaleLowerCase(),
-        )
-      )
-    ) {
+    if (!allowedPaths.has(file.path.toLocaleLowerCase())) {
       log.info(`Deleting extra file: ${file.path}`);
       totals.removedFiles += 1;
       await Deno.remove(file.path);
     }
   }
+
   log.info("Removing checksums from cache");
+  
+  // Create a Set of allowed file names for O(1) lookup
+  const allowedFileNames = new Set(
+     filteredBundles.map(d => d.fileName.toLocaleLowerCase())
+  );
+
   Object.keys(checksums).forEach((fileName) => {
-    if (
-      !filteredBundles.some((download) =>
-        isEql(
-          fileName.toLocaleLowerCase(),
-          download.fileName.toLocaleLowerCase(),
-        )
-      )
-    ) {
+    if (!allowedFileNames.has(fileName.toLocaleLowerCase())) {
       log.info(`Removing checksum from cache: ${fileName}`);
       totals.removedChecksums += 1;
       delete checksums[fileName];

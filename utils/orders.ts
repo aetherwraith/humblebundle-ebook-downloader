@@ -59,31 +59,6 @@ function createDownloadInfo(
   };
 }
 
-function isDuplicateDownload(
-  downloads: DownloadInfo[],
-  downloadInfo: DownloadInfo,
-  struct: DownloadStruct,
-  options: Options,
-): boolean {
-  return (
-    options.dedup &&
-    downloads.some(
-      (elem) =>
-        isEql(
-          elem.fileName.toLocaleLowerCase(),
-          downloadInfo.fileName.toLocaleLowerCase(),
-        ) ||
-        (struct.sha1 &&
-          isEql(
-            struct.sha1.toLocaleLowerCase(),
-            elem.sha1?.toLocaleLowerCase(),
-          ) &&
-          struct.md5 &&
-          isEql(struct.md5.toLocaleLowerCase(), elem.md5?.toLocaleLowerCase())),
-    )
-  );
-}
-
 export function filterBundles(
   bundles: Bundle[],
   options: Options,
@@ -98,6 +73,9 @@ export function filterBundles(
     } bundles containing downloadable items`,
   );
   const downloads: DownloadInfo[] = [];
+  const byFilePath = new Map<string, DownloadInfo>();
+  const byFileName = new Map<string, DownloadInfo>();
+  const byHash = new Map<string, DownloadInfo>();
 
   bundles.forEach((bundle) => {
     bundle.subproducts.forEach((subProduct) => {
@@ -116,41 +94,37 @@ export function filterBundles(
                   ? new Date(struct.uploaded_at)
                   : new Date(bundle.created),
               );
-              const isDuplicate = isDuplicateDownload(
-                downloads,
-                downloadInfo,
-                struct,
-                options,
-              );
+
+              // Check for duplicates using Maps
+              let isDuplicate = false;
+              if (options.dedup) {
+                 if (byFileName.has(downloadInfo.fileName.toLocaleLowerCase())) {
+                     isDuplicate = true;
+                 } else if (struct.sha1 && struct.md5) {
+                     const key = `${struct.sha1.toLocaleLowerCase()}|${struct.md5.toLocaleLowerCase()}`;
+                     if (byHash.has(key)) {
+                         isDuplicate = true;
+                     }
+                 }
+              }
 
               if (!isDuplicate) {
-                if (
-                  !downloads.some((elem) =>
-                    isEql(
-                      elem.filePath.toLocaleLowerCase(),
-                      downloadInfo.filePath.toLocaleLowerCase(),
-                    )
-                  )
-                ) {
+                const existingPath = byFilePath.get(downloadInfo.filePath.toLocaleLowerCase());
+                if (!existingPath) {
                   downloads.push(downloadInfo);
+                  byFilePath.set(downloadInfo.filePath.toLocaleLowerCase(), downloadInfo);
+                  byFileName.set(downloadInfo.fileName.toLocaleLowerCase(), downloadInfo);
+                  if (downloadInfo.sha1 && downloadInfo.md5) {
+                      byHash.set(`${downloadInfo.sha1.toLocaleLowerCase()}|${downloadInfo.md5.toLocaleLowerCase()}`, downloadInfo);
+                  }
                 } else {
-                  const duplicate = downloads.find((elem) =>
-                    isEql(
-                      elem.filePath.toLocaleLowerCase(),
-                      downloadInfo.filePath.toLocaleLowerCase(),
-                    )
-                  );
+                  const duplicate = existingPath;
                   progress.log(
                     `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
                   );
                 }
               } else {
-                const duplicate = downloads.find((elem) =>
-                  isEql(
-                    elem.fileName.toLocaleLowerCase(),
-                    downloadInfo.fileName.toLocaleLowerCase(),
-                  )
-                );
+                const duplicate = byFileName.get(downloadInfo.fileName.toLocaleLowerCase()); // Or byHash
                 progress.log(
                   `Potential bob purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
                 );
@@ -175,7 +149,11 @@ export function filterEbooks(
   progress.log(
     `${yellow(bundles.length.toString())} bundles containing ebooks`,
   );
-  let downloads: DownloadInfo[] = [];
+  
+  const activeDownloads = new Set<DownloadInfo>();
+  const byMachineName = new Map<string, DownloadInfo>();
+  const byFilePath = new Map<string, DownloadInfo>();
+
   bundles.forEach((bundle) => {
     let date = new Date(bundle.created);
     bundle.subproducts.forEach((subProduct) => {
@@ -195,16 +173,12 @@ export function filterEbooks(
                 ? new Date(struct.uploaded_at)
                 : new Date(bundle.created);
               if (uploaded_at > date) date = uploaded_at;
-              // TODO: check hash matches too
-              let existing;
+              
+              let existing: DownloadInfo | undefined;
               if (options.dedup) {
-                existing = downloads.find((elem) =>
-                  isEql(
-                    elem.machineName.toLocaleLowerCase(),
-                    subProduct.machine_name.toLocaleLowerCase(),
-                  )
-                );
+                existing = byMachineName.get(subProduct.machine_name.toLocaleLowerCase());
               }
+
               if (
                 !existing ||
                 (date > existing.date &&
@@ -214,13 +188,9 @@ export function filterEbooks(
                   ))
               ) {
                 if (existing) {
-                  downloads = downloads.filter(
-                    (elem) =>
-                      !isEql(
-                        elem.machineName.toLocaleLowerCase(),
-                        existing.machineName.toLocaleLowerCase(),
-                      ),
-                  );
+                   activeDownloads.delete(existing);
+                   byMachineName.delete(subProduct.machine_name.toLocaleLowerCase());
+                   byFilePath.delete(existing.filePath.toLocaleLowerCase());
                 }
 
                 const downloadInfo = createDownloadInfo(
@@ -233,19 +203,17 @@ export function filterEbooks(
                     : new Date(bundle.created),
                 );
 
-                if (
-                  !downloads.some((elem) =>
-                    isEql(
-                      elem.filePath.toLocaleLowerCase(),
-                      downloadInfo.filePath.toLocaleLowerCase(),
-                    )
-                  )
-                ) {
-                  downloads.push(downloadInfo);
+                if (!byFilePath.has(downloadInfo.filePath.toLocaleLowerCase())) {
+                   activeDownloads.add(downloadInfo);
+                   if (options.dedup) {
+                       byMachineName.set(subProduct.machine_name.toLocaleLowerCase(), downloadInfo);
+                   }
+                   byFilePath.set(downloadInfo.filePath.toLocaleLowerCase(), downloadInfo);
                 } else {
-                  progress.log(
-                    `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${existing?.bundle}, ${existing?.fileName}`,
-                  );
+                   const duplicate = byFilePath.get(downloadInfo.filePath.toLocaleLowerCase());
+                   progress.log(
+                    `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
+                   );
                 }
               }
             }
@@ -254,6 +222,8 @@ export function filterEbooks(
       });
     });
   });
+
+  const downloads = Array.from(activeDownloads);
   totals.filteredDownloads = downloads.length;
   return downloads.sort((a, b) => (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name));
 }
