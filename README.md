@@ -1,57 +1,65 @@
-# humblebundle-ebook-downloader
+# Humble Bundle Ebook Downloader
 
-An easy way to download ebooks from your humblebundle account
+An easy way to download ebooks from your Humble Bundle account.
 
 ## Installation
 
-To run the tool, you can either install NodeJS and use npm to install it, or
-install Docker and run it as a docker container.
+### Deno
 
-### NPM
+This tool is built with [Deno](https://deno.com/). Ensure you have Deno installed (v1.40+ recommended).
 
-To install it via npm, run:
-
-```shell
-$ npm install -g humblebundle-ebook-downloader
-```
-
-You can now use the tool by running the `humblebundle-ebook-downloader` command.
-
-### Docker
-
-To run the tool via Docker, run:
+To run directly so you don't have to install it:
 
 ```shell
-docker run -v $(PWD)/download:/download --rm -it dmarby/humblebundle-ebook-downloader -d /download --auth-token "auth_string_here"
+deno run --allow-net --allow-read --allow-write --allow-env index.ts --help
 ```
 
-This will download the books to the `download` folder in your current work
-directory.
+To install globally:
 
-Note that you need to get your auth token from the authentication cookie in your
-browser after logging in to the humblebundle website (\_simpleauth_sess) when
-using Docker, as the option to interactively log in isn't available. When using
-the tool installed via npm, it will launch a browser and let you log in
-interactively instead.
+```shell
+deno install --global --allow-net --allow-read --allow-write --allow-env -n humblebundle-ebook-downloader index.ts
+```
 
 ## Usage
 
+If installed globally:
+
 ```shell
 $ humblebundle-ebook-downloader --help
-
-  Usage: humblebundle-ebook-downloader [options]
-
-  Options:
-
-    -V, --version                              output the version number
-    -d, --download-folder <downloader_folder>  Download folder (default: download)
-    -l, --download-limit <download_limit>      Parallel download limit (default: 1)
-    -f, --format <format>                      What format to download the ebook in (all, cbz, epub, mobi, pdf, pdf_hd) (default: epub)
-    --auth-token <auth-token>                  Optional: If you want to run headless, you can specify your authentication cookie from your browser (_simpleauth_sess)
-    -a, --all                                  Download all bundles
-    --debug                                    Enable debug logging
-    -h, --help                                 output usage information
 ```
+
+Or using `deno run`:
+
+```shell
+$ deno run --allow-net --allow-read --allow-write --allow-env index.ts [command] [options]
+```
+
+### Commands
+
+- `ebooks`: Download ebooks (default)
+- `all`: Download all bundles
+- `trove`: Download Humble Trove items
+- `checksums`: Calculate checksums of existing files
+- `cleanup`: Organize and clean up downloaded files
+
+### Options
+
+```
+  -d, --download-folder <dir>    Download folder (Required)
+  -t, --auth-token <token>       Authentication cookie from your browser (_simpleauth_sess) (Required for new sessions)
+  -l, --parallel <num>           Parallel download limit (default: 1)
+  -f, --format <format>          Format(s) to download (cbz, epub, mobi, pdf, pdf_hd) (Can be repeated)
+  -p, --platform <platform>      Platform(s) to download (ebook, video, audio) (Can be repeated)
+  -b, --bundle-folders           Arrange downloads in bundle folders (default: true)
+  --no-dedup                     Disable deduplication
+  --product-folders              Individual product folders (default: true)
+  --human-file-names             Use human readable file names (default: false)
+  -h, --help                     Output usage information
+```
+
+### Authentication
+
+You need to get your auth token from the authentication cookie in your browser after logging in to the humblebundle website (`_simpleauth_sess`). Pass this token using the `--auth-token` argument.
 
 ## Contributors
 

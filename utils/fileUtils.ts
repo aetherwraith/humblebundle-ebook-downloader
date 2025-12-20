@@ -47,27 +47,22 @@ export async function loadChecksumCache(options: Options) {
   );
 
   Deno.addSignalListener("SIGINT", () => {
-    console.log("SIGINT");
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   });
 
   Deno.addSignalListener("SIGABRT", () => {
-    console.log("SIGABRT");
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   });
 
   Deno.addSignalListener("SIGQUIT", () => {
-    console.log("SIGQUIT");
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   });
 
   Deno.addSignalListener("SIGTERM", () => {
-    console.log("SIGTERM");
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   });
 
   globalThis.onunload = () => {
-    console.log("onunload");
     writeJsonFileSync(options.downloadFolder, cacheFileName, checksumCache);
   };
 

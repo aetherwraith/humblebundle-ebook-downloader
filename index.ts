@@ -2,8 +2,7 @@ import { newQueue } from "@henrygd/queue";
 import { parseArgs } from "@std/cli/parse-args";
 import { WalkEntry } from "@std/fs/walk";
 import * as log from "@std/log";
-// import type { MultiBar } from "cli-progress";
-// import cliProgress from "cli-progress";
+
 import { MultiBarWrapper } from "./utils/progressWrapper.ts";
 import { checksum } from "./utils/checksums.ts";
 import { COMMANDS, parseOptions } from "./utils/constants.ts";
@@ -67,18 +66,20 @@ totals.checksumsLoaded = Object.keys(checksums).length;
 const abortController = new AbortController();
 const signal = abortController.signal;
 
-Deno.addSignalListener("SIGINT", () => {
-  log.warn("\nSIGINT received. Exiting...");
+Deno.addSignalListener("SIGINT", async () => {
+
   abortController.abort();
   
   for (const queue of Object.values(queues)) {
     try {
       queue.clear();
-    } catch (err) {
+    } catch (_err) {
       // Ignore errors when clearing queues during shutdown
     }
   }
+  await Promise.all(Object.values(queues).map((queue) => queue.done()));
   progress.stop();
+  log.info(totals);
   Deno.exit(0);
 });
 

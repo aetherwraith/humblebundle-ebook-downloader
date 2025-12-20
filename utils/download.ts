@@ -31,12 +31,12 @@ export async function downloadItem(
       async () =>
         await doDownload(download, progress, checksums, signal).catch((err) => {
           progress.log("Error downloading ", download.fileName);
-          progress.log({err});
+          progress.log(err.message);
           if (err instanceof RetryError) {
             progress.log("Retry error :", err.message);
             progress.log("Error cause :", err.cause);
-            throw err;
           }
+          throw err;
         }),
       retryOptions,
     );
