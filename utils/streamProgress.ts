@@ -19,7 +19,10 @@ export class StreamProgress extends TransformStream<Uint8Array, Uint8Array> {
           type: "bytes",
         });
       },
-      transform(chunk: Uint8Array, controller: TransformStreamDefaultController<Uint8Array>) {
+      transform(
+        chunk: Uint8Array,
+        controller: TransformStreamDefaultController<Uint8Array>,
+      ) {
         completed += chunk.byteLength;
         progressBar.increment(chunk.byteLength);
         controller.enqueue(chunk);
@@ -30,4 +33,3 @@ export class StreamProgress extends TransformStream<Uint8Array, Uint8Array> {
     });
   }
 }
-

@@ -66,10 +66,9 @@ totals.checksumsLoaded = Object.keys(checksums).length;
 const abortController = new AbortController();
 const signal = abortController.signal;
 
-Deno.addSignalListener("SIGINT", async () => {
-
+Deno.addSignalListener("SIGINT", () => {
   abortController.abort();
-  
+
   for (const queue of Object.values(queues)) {
     try {
       queue.clear();
@@ -77,7 +76,7 @@ Deno.addSignalListener("SIGINT", async () => {
       // Ignore errors when clearing queues during shutdown
     }
   }
-  await Promise.all(Object.values(queues).map((queue) => queue.done()));
+
   progress.stop();
   log.info(totals);
   Deno.exit(0);

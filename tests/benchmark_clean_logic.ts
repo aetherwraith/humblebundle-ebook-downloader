@@ -1,4 +1,3 @@
-
 import { clean, walkExistingFiles } from "../utils/fileUtils.ts";
 import { DownloadInfo, Options, Totals } from "../types/general.ts";
 import { Checksums } from "../types/bundle.ts";
@@ -53,45 +52,57 @@ const existingFiles = Array.from({ length: MOCK_FILE_COUNT }, (_, i) => ({
   name: `file${i}.epub`,
 }));
 
-const allowedDownloads: DownloadInfo[] = Array.from({ length: MOCK_DOWNLOAD_COUNT }, (_, i) => ({
-    bundle: "bundle",
-    name: "name",
-    machineName: "machine",
-    fileName: `file${i * 2}.epub`, // Only even files are allowed
-    downloadPath: "/abs/path/to/download",
-    filePath: `/abs/path/to/download/file${i * 2}.epub`,
-    url: new URL("http://example.com"),
-    date: new Date(),
-    file_size: 100,
+const allowedDownloads: DownloadInfo[] = Array.from({
+  length: MOCK_DOWNLOAD_COUNT,
+}, (_, i) => ({
+  bundle: "bundle",
+  name: "name",
+  machineName: "machine",
+  fileName: `file${i * 2}.epub`, // Only even files are allowed
+  downloadPath: "/abs/path/to/download",
+  filePath: `/abs/path/to/download/file${i * 2}.epub`,
+  url: new URL("http://example.com"),
+  date: new Date(),
+  file_size: 100,
 } as DownloadInfo));
 
-
-console.log(`Benchmarking with ${MOCK_FILE_COUNT} files and ${MOCK_DOWNLOAD_COUNT} allowed downloads.`);
+console.log(
+  `Benchmarking with ${MOCK_FILE_COUNT} files and ${MOCK_DOWNLOAD_COUNT} allowed downloads.`,
+);
 
 // OLD ALG
 const startOld = performance.now();
 let removedOld = 0;
 for (const file of existingFiles) {
-    if (
-        !allowedDownloads.some((download) =>
-             file.path.toLowerCase() === download.filePath.toLowerCase()
-        )
-    ) {
-        removedOld++;
-    }
+  if (
+    !allowedDownloads.some((download) =>
+      file.path.toLowerCase() === download.filePath.toLowerCase()
+    )
+  ) {
+    removedOld++;
+  }
 }
 const endOld = performance.now();
-console.log(`Old Algorithm: ${(endOld - startOld).toFixed(2)}ms, found ${removedOld} to remove.`);
+console.log(
+  `Old Algorithm: ${
+    (endOld - startOld).toFixed(2)
+  }ms, found ${removedOld} to remove.`,
+);
 
 // NEW ALG
 const startNew = performance.now();
-const allowedPaths = new Set(allowedDownloads.map(d => d.filePath.toLowerCase()));
+const allowedPaths = new Set(
+  allowedDownloads.map((d) => d.filePath.toLowerCase()),
+);
 let removedNew = 0;
 for (const file of existingFiles) {
-    if (!allowedPaths.has(file.path.toLowerCase())) {
-        removedNew++;
-    }
+  if (!allowedPaths.has(file.path.toLowerCase())) {
+    removedNew++;
+  }
 }
 const endNew = performance.now();
-console.log(`New Algorithm: ${(endNew - startNew).toFixed(2)}ms, found ${removedNew} to remove.`);
-
+console.log(
+  `New Algorithm: ${
+    (endNew - startNew).toFixed(2)
+  }ms, found ${removedNew} to remove.`,
+);

@@ -6,7 +6,8 @@ An easy way to download ebooks from your Humble Bundle account.
 
 ### Deno
 
-This tool is built with [Deno](https://deno.com/). Ensure you have Deno installed (v1.40+ recommended).
+This tool is built with [Deno](https://deno.com/). Ensure you have Deno
+installed (v1.40+ recommended).
 
 To run directly so you don't have to install it:
 
@@ -45,21 +46,23 @@ $ deno run --allow-net --allow-read --allow-write --allow-env index.ts [command]
 ### Options
 
 ```
-  -d, --download-folder <dir>    Download folder (Required)
-  -t, --auth-token <token>       Authentication cookie from your browser (_simpleauth_sess) (Required for new sessions)
-  -l, --parallel <num>           Parallel download limit (default: 1)
-  -f, --format <format>          Format(s) to download (cbz, epub, mobi, pdf, pdf_hd) (Can be repeated)
-  -p, --platform <platform>      Platform(s) to download (ebook, video, audio) (Can be repeated)
-  -b, --bundle-folders           Arrange downloads in bundle folders (default: true)
-  --no-dedup                     Disable deduplication
-  --product-folders              Individual product folders (default: true)
-  --human-file-names             Use human readable file names (default: false)
-  -h, --help                     Output usage information
+-d, --download-folder <dir>    Download folder (Required)
+-t, --auth-token <token>       Authentication cookie from your browser (_simpleauth_sess) (Required for new sessions)
+-l, --parallel <num>           Parallel download limit (default: 1)
+-f, --format <format>          Format(s) to download (cbz, epub, mobi, pdf, pdf_hd) (Can be repeated)
+-p, --platform <platform>      Platform(s) to download (ebook, video, audio) (Can be repeated)
+-b, --bundle-folders           Arrange downloads in bundle folders (default: true)
+--no-dedup                     Disable deduplication
+--product-folders              Individual product folders (default: true)
+--human-file-names             Use human readable file names (default: false)
+-h, --help                     Output usage information
 ```
 
 ### Authentication
 
-You need to get your auth token from the authentication cookie in your browser after logging in to the humblebundle website (`_simpleauth_sess`). Pass this token using the `--auth-token` argument.
+You need to get your auth token from the authentication cookie in your browser
+after logging in to the humblebundle website (`_simpleauth_sess`). Pass this
+token using the `--auth-token` argument.
 
 ## Contributors
 

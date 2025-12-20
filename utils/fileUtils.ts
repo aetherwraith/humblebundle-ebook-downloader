@@ -87,10 +87,10 @@ export async function clean(
   totals: Totals,
 ) {
   log.info("Removing files...");
-  
+
   // Create a Set of allowed file paths for O(1) lookup
   const allowedPaths = new Set(
-    filteredBundles.map((d) => d.filePath.toLocaleLowerCase())
+    filteredBundles.map((d) => d.filePath.toLocaleLowerCase()),
   );
 
   for await (const file of walkExistingFiles(options)) {
@@ -102,10 +102,10 @@ export async function clean(
   }
 
   log.info("Removing checksums from cache");
-  
+
   // Create a Set of allowed file names for O(1) lookup
   const allowedFileNames = new Set(
-     filteredBundles.map(d => d.fileName.toLocaleLowerCase())
+    filteredBundles.map((d) => d.fileName.toLocaleLowerCase()),
   );
 
   Object.keys(checksums).forEach((fileName) => {
@@ -131,14 +131,17 @@ export async function deleteEmptyFolders(folder: string) {
     // We catch the error to ignore non-empty directories.
     await Deno.remove(folder);
   } catch (err) {
-    if (!(err instanceof Deno.errors.NotFound) && (err instanceof Error) && !err.message.includes("Directory not empty")) {
-       // Only log unexpected errors. "Directory not empty" is expected.
-       // Note: Deno doesn't have a specific error class for "Directory not empty" usually, it's often a generic OS error or similar.
-       // However, Deno.errors.NotFound is clear.
-       // Let's rely on the behavior that we only want to suppress "not empty".
-       // Actually, we can check if it's empty before deleting to be cleaner, but Deno.remove is atomic-ish.
-       // Let's stick to try-remove pattern but be careful about the error.
-       // If we can't delete it, it's fine.
+    if (
+      !(err instanceof Deno.errors.NotFound) && (err instanceof Error) &&
+      !err.message.includes("Directory not empty")
+    ) {
+      // Only log unexpected errors. "Directory not empty" is expected.
+      // Note: Deno doesn't have a specific error class for "Directory not empty" usually, it's often a generic OS error or similar.
+      // However, Deno.errors.NotFound is clear.
+      // Let's rely on the behavior that we only want to suppress "not empty".
+      // Actually, we can check if it's empty before deleting to be cleaner, but Deno.remove is atomic-ish.
+      // Let's stick to try-remove pattern but be careful about the error.
+      // If we can't delete it, it's fine.
     }
   }
 }

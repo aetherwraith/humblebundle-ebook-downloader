@@ -62,7 +62,7 @@ export async function doDownload(
   const req = await fetch(download.url, { signal });
   const size = Number(req.headers.get("content-length"));
   if (!req.body) {
-      throw new Error("Response body is empty");
+    throw new Error("Response body is empty");
   }
   const downloadStream = req.body.pipeThrough(
     new StreamProgress(size, download.filePath, progress, "Downloading", cyan),

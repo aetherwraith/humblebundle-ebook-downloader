@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { computeFileHash, checkSignatureMatch } from "../../utils/checksums.ts";
+import { checkSignatureMatch, computeFileHash } from "../../utils/checksums.ts";
 import { DownloadInfo, Totals } from "../../types/general.ts";
 import { Checksums } from "../../types/bundle.ts";
 import { MultiBarWrapper } from "../../utils/progressWrapper.ts";
@@ -33,30 +33,38 @@ Deno.test("checkSignatureMatch - match SHA1", async () => {
   const checksums: Record<string, Checksums> = {
     "test.txt": {
       sha1: "0a4d55a8d778e5022fab701977c5d840bbc486d0",
-      md5: "b10a8db164e0754105b7a99be72e3fe5"
-    }
+      md5: "b10a8db164e0754105b7a99be72e3fe5",
+    },
   };
 
   const progress = {
-      log: () => {},
+    log: () => {},
   } as unknown as MultiBarWrapper;
-  
+
   const totals = { checksums: 0 } as Totals;
-  
+
   // We mock Deno.stat and Deno.open/exists?
   // checkSignatureMatch first calls `exists(download.filePath)`.
   // If we can't easily mock `exists`, we should create a dummy file.
-  
+
   const tempFile = await Deno.makeTempFile();
   try {
-     const updatedDownload = { ...download, filePath: tempFile, fileName: "test_file" };
-     const updatedChecksums = { "test_file": checksums["test.txt"] };
+    const updatedDownload = {
+      ...download,
+      filePath: tempFile,
+      fileName: "test_file",
+    };
+    const updatedChecksums = { "test_file": checksums["test.txt"] };
 
-     // Case 1: Checksums cached
-     const result = await checkSignatureMatch(updatedDownload, updatedChecksums, progress, totals);
-     assertEquals(result, true);
-
+    // Case 1: Checksums cached
+    const result = await checkSignatureMatch(
+      updatedDownload,
+      updatedChecksums,
+      progress,
+      totals,
+    );
+    assertEquals(result, true);
   } finally {
-     await Deno.remove(tempFile).catch(() => {});
+    await Deno.remove(tempFile).catch(() => {});
   }
 });

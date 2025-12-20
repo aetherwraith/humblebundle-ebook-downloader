@@ -15,8 +15,14 @@ export async function computeFileHash(
 ): Promise<Checksums> {
   const [shaStream, md5Stream] = stream.tee();
   const [shaHashBuffer, md5HashBuffer] = await Promise.all([
-    crypto.subtle.digest("SHA-1", shaStream as unknown as AsyncIterable<BufferSource>),
-    crypto.subtle.digest("MD5", md5Stream as unknown as AsyncIterable<BufferSource>),
+    crypto.subtle.digest(
+      "SHA-1",
+      shaStream as unknown as AsyncIterable<BufferSource>,
+    ),
+    crypto.subtle.digest(
+      "MD5",
+      md5Stream as unknown as AsyncIterable<BufferSource>,
+    ),
   ]);
   return {
     sha1: encodeHex(shaHashBuffer),

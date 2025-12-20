@@ -20,9 +20,12 @@ export const COMMANDS = {
   trove: "trove",
 };
 
-const argBooleans = ["dedup", "bundleFolders",
-"productFolders",
-"humanFileNames"];
+const argBooleans = [
+  "dedup",
+  "bundleFolders",
+  "productFolders",
+  "humanFileNames",
+];
 const argDefaults = {
   dedup: true,
   bundleFolders: true,

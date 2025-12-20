@@ -28,7 +28,7 @@ export async function filterTroves(
       if (Object.hasOwn(trove.downloads, platform)) {
         queues.orderInfo.add(async () => {
           const download = trove.downloads[platform];
-          if (!download) return; 
+          if (!download) return;
           const url = await getTroveURL(
             download.machine_name,
             download.url.web,
@@ -51,7 +51,10 @@ export async function filterTroves(
             sha1: download.sha1,
             md5: download.md5,
             structName: fileName,
-            date: new Date(download.uploaded_at || download.timestamp * 1000 || trove["date-added"] * 1000),
+            date: new Date(
+              download.uploaded_at || download.timestamp * 1000 ||
+                trove["date-added"] * 1000,
+            ),
             file_size: download.file_size,
           });
         });
@@ -60,5 +63,7 @@ export async function filterTroves(
   });
   await queues.orderInfo.done();
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) => (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name));
+  return downloads.sort((a, b) =>
+    (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name)
+  );
 }

@@ -11,12 +11,22 @@ function createMockBundle(
     humanName: string;
     downloads: {
       platform: Platform;
-      structs: { name?: string; url?: { web: string; bittorrent: string }; sha1?: string; md5?: string; uploaded_at?: string; file_size?: number }[];
+      structs: {
+        name?: string;
+        url?: { web: string; bittorrent: string };
+        sha1?: string;
+        md5?: string;
+        uploaded_at?: string;
+        file_size?: number;
+      }[];
     }[];
-  }[]
+  }[],
 ): Bundle {
   return {
-    product: { human_name: productName, machine_name: productName.toLowerCase() },
+    product: {
+      human_name: productName,
+      machine_name: productName.toLowerCase(),
+    },
     subproducts: subProducts.map((sp) => ({
       machine_name: sp.machineName,
       human_name: sp.humanName,
@@ -49,11 +59,19 @@ Deno.test("filterBundles - filters by platform", () => {
         downloads: [
           {
             platform: Platform.Windows,
-            structs: [{ url: { web: "http://example.com/game1.exe", bittorrent: "" }, sha1: "abc", md5: "123" }],
+            structs: [{
+              url: { web: "http://example.com/game1.exe", bittorrent: "" },
+              sha1: "abc",
+              md5: "123",
+            }],
           },
           {
             platform: Platform.Linux, // Not selected
-            structs: [{ url: { web: "http://example.com/game1.tar.gz", bittorrent: "" }, sha1: "def", md5: "456" }],
+            structs: [{
+              url: { web: "http://example.com/game1.tar.gz", bittorrent: "" },
+              sha1: "def",
+              md5: "456",
+            }],
           },
         ],
       },
@@ -77,36 +95,49 @@ Deno.test("filterBundles - filters by platform", () => {
 });
 
 Deno.test("filterBundles - deduplication by filename", () => {
-    const bundles = [
-        createMockBundle("Bundle1", [
-            {
-                machineName: "game1",
-                humanName: "Game 1",
-                downloads: [{ platform: Platform.Windows, structs: [{ url: { web: "http://example.com/file.exe", bittorrent: "" }, sha1: "a", md5: "b" }] }],
-            }
-        ]),
-        createMockBundle("Bundle2", [
-            {
-                machineName: "game1_dupe",
-                humanName: "Game 1 Dupe",
-                downloads: [{ platform: Platform.Windows, structs: [{ url: { web: "http://example.com/file.exe", bittorrent: "" }, sha1: "c", md5: "d" }] }],
-            }
-        ])
-    ];
+  const bundles = [
+    createMockBundle("Bundle1", [
+      {
+        machineName: "game1",
+        humanName: "Game 1",
+        downloads: [{
+          platform: Platform.Windows,
+          structs: [{
+            url: { web: "http://example.com/file.exe", bittorrent: "" },
+            sha1: "a",
+            md5: "b",
+          }],
+        }],
+      },
+    ]),
+    createMockBundle("Bundle2", [
+      {
+        machineName: "game1_dupe",
+        humanName: "Game 1 Dupe",
+        downloads: [{
+          platform: Platform.Windows,
+          structs: [{
+            url: { web: "http://example.com/file.exe", bittorrent: "" },
+            sha1: "c",
+            md5: "d",
+          }],
+        }],
+      },
+    ]),
+  ];
 
-    const options = {
-        platform: [Platform.Windows],
-        downloadFolder: "/tmp",
-        dedup: true,
-    } as Options;
-    const totals = { preFilteredDownloads: 0, filteredDownloads: 0 } as Totals;
+  const options = {
+    platform: [Platform.Windows],
+    downloadFolder: "/tmp",
+    dedup: true,
+  } as Options;
+  const totals = { preFilteredDownloads: 0, filteredDownloads: 0 } as Totals;
 
-    const result = filterBundles(bundles, options, totals, mockProgress);
+  const result = filterBundles(bundles, options, totals, mockProgress);
 
-    assertEquals(result.length, 1, "Should removed duplicate filename");
-    assertEquals(result[0].bundle, "Bundle1");
+  assertEquals(result.length, 1, "Should removed duplicate filename");
+  assertEquals(result[0].bundle, "Bundle1");
 });
-
 
 Deno.test("filterEbooks - checks format priority", () => {
   const bundles = [
@@ -118,8 +149,16 @@ Deno.test("filterEbooks - checks format priority", () => {
           {
             platform: Platform.Ebook,
             structs: [
-              { name: "PDF", url: { web: "http://example.com/book1.pdf", bittorrent: "" }, uploaded_at: "2023-01-01" },
-              { name: "EPUB", url: { web: "http://example.com/book1.epub", bittorrent: "" }, uploaded_at: "2023-01-01" },
+              {
+                name: "PDF",
+                url: { web: "http://example.com/book1.pdf", bittorrent: "" },
+                uploaded_at: "2023-01-01",
+              },
+              {
+                name: "EPUB",
+                url: { web: "http://example.com/book1.epub", bittorrent: "" },
+                uploaded_at: "2023-01-01",
+              },
             ],
           },
         ],
@@ -147,7 +186,7 @@ Deno.test("filterEbooks - checks format priority", () => {
   //   if dedup: existing = byMachineName.get(...)
   //   if !existing || (date > existing.date && ...)
   //     replace existing
-  
+
   // It seems it iterates formats in order.
   // If we pass format: ['epub', 'pdf'].
   // 1. Process EPUB. Adds to map.
@@ -157,7 +196,7 @@ Deno.test("filterEbooks - checks format priority", () => {
   // if !existing || (date > existing.date && isEql(struct.name, existing.structName))
   // Wait, if dates are equal, it doesn't replace.
   // So the FIRST format processed that matches wins if dates are equal?
-  
+
   // Actually logic:
   // options.format.forEach((format) => { ... })
   // It processes formats in order of options.format.
@@ -168,7 +207,7 @@ Deno.test("filterEbooks - checks format priority", () => {
   //    Condition: !existing (False) OR (date > existing (False) && ...)
   //    So it keeps EPUB.
   // So the *first* format in `options.format` has priority if dates are same.
-  
+
   options = {
     platform: [Platform.Ebook],
     format: ["pdf", "epub"], // PDF first
