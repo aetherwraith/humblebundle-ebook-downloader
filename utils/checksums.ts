@@ -52,7 +52,13 @@ export async function checkSignatureMatch(
     progress,
     totals,
   );
-  return isHashVerified(download, hash);
+  const verified = isHashVerified(download, hash);
+  if (!verified) {
+    progress.log("Hash verification failed for ", download.fileName);
+    progress.log(`calculated: ${hash.sha1} ${hash.md5}`);
+    progress.log(`expected: ${download.sha1} ${download.md5}`);
+  }
+  return verified;
 }
 
 async function getOrComputeChecksum(

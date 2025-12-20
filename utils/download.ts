@@ -30,6 +30,8 @@ export async function downloadItem(
     await retry(
       async () =>
         await doDownload(download, progress, checksums, signal).catch((err) => {
+          progress.log("Error downloading ", download.fileName);
+          progress.log({err});
           if (err instanceof RetryError) {
             progress.log("Retry error :", err.message);
             progress.log("Error cause :", err.cause);
