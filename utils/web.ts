@@ -1,6 +1,6 @@
 import { MultiBarWrapper, SingleBarWrapper } from "./progressWrapper.ts";
 import { userAgent } from "./constants.ts";
-import { writeJsonFile } from "./fileUtils.ts";
+import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
 
 import { Options, Queues, Totals } from "../types/general.ts";
 import { Trove } from "../types/trove.ts";
@@ -48,12 +48,23 @@ export async function getAllBundles(
   const gameKeys: GameKey[] = await orderResponse.json();
   totals.bundles = gameKeys.length;
 
-  const progressBar: SingleBarWrapper = progress.create(gameKeys.length, 0, {
+  let cachedBundles: Bundle[] = [];
+  if (!options.update) {
+    const readData = await readJsonFile(options.downloadFolder, "bundles.json");
+    if (Array.isArray(readData)) {
+      cachedBundles = readData;
+    }
+  }
+  const cachedKeys = new Set(cachedBundles.map(b => b.gamekey));
+
+  const gameKeysToFetch = gameKeys.filter(gk => !cachedKeys.has(gk.gamekey));
+  const bundles: Bundle[] = cachedBundles.filter(b => gameKeys.some(gk => gk.gamekey === b.gamekey));
+
+  const progressBar: SingleBarWrapper = progress.create(gameKeysToFetch.length, 0, {
     file: "Bundles",
   });
-  const bundles: Bundle[] = [];
 
-  for (const gameKey of gameKeys) {
+  for (const gameKey of gameKeysToFetch) {
     queues.orderInfo.add(async () => {
       const bundleDetails = await fetchBundleDetails(
         BASE_URL,

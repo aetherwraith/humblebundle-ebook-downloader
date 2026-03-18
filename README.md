@@ -26,13 +26,13 @@ deno install --global --allow-net --allow-read --allow-write --allow-env -n humb
 If installed globally:
 
 ```shell
-$ humblebundle-ebook-downloader --help
+humblebundle-ebook-downloader --help
 ```
 
 Or using `deno run`:
 
 ```shell
-$ deno run --allow-net --allow-read --allow-write --allow-env index.ts [command] [options]
+deno run --allow-net --allow-read --allow-write --allow-env index.ts [command] [options]
 ```
 
 ### Commands
@@ -45,24 +45,26 @@ $ deno run --allow-net --allow-read --allow-write --allow-env index.ts [command]
 
 ### Options
 
-```
+```text
 -d, --download-folder <dir>    Download folder (Required)
--t, --auth-token <token>       Authentication cookie from your browser (_simpleauth_sess) (Required for new sessions)
--l, --parallel <num>           Parallel download limit (default: 1)
+-t, --auth-token <token>       Authentication cookie from your browser (_simpleauth_sess) (Optional if cookie.txt is present)
+-l, --parallel <num>           Parallel download limit (default: 5)
 -f, --format <format>          Format(s) to download (cbz, epub, mobi, pdf, pdf_hd) (Can be repeated)
 -p, --platform <platform>      Platform(s) to download (ebook, video, audio) (Can be repeated)
 -b, --bundle-folders           Arrange downloads in bundle folders (default: true)
 --no-dedup                     Disable deduplication
 --product-folders              Individual product folders (default: true)
 --human-file-names             Use human readable file names (default: false)
+-u, --update                   Force fetch bundle details instead of using local cache
 -h, --help                     Output usage information
 ```
 
 ### Authentication
 
-You need to get your auth token from the authentication cookie in your browser
-after logging in to the humblebundle website (`_simpleauth_sess`). Pass this
-token using the `--auth-token` argument.
+You need to authenticate to Humble Bundle to download your files. There are two ways to do this:
+
+1. **Automatically (Recommended):** Export your Humble Bundle cookies using a browser extension (like "Get cookies.txt LOCALLY") and save the file as `cookie.txt` in the same folder as `index.ts`. The script will automatically detect and parse it.
+2. **Manually:** Find the `_simpleauth_sess` cookie in your browser's developer tools after logging in. Pass this token manually using the `-t` or `--auth-token` argument.
 
 ## Contributors
 

@@ -44,6 +44,7 @@ The tool supports the following commands (defined in `utils/constants.ts`):
 
 Common options:
 - `-d, --download-folder`: Output directory.
-- `-t, --auth-token`: Authentication cookie (`_simpleauth_sess`).
-- `-l, --parallel`: Parallel download limit.
+- `-t, --auth-token`: Authentication cookie (`_simpleauth_sess`). Auto-detected if `cookie.txt` exists.
+- `-l, --parallel`: Parallel download limit (default: 5).
 - `-f, --format`: Ebook formats (cbz, epub, mobi, pdf, pdf_hd).
+- `-u, --update`: Force refresh bundle info from API (skip local cache).

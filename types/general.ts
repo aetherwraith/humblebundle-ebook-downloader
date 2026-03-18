@@ -24,6 +24,7 @@ export interface Options extends Record<string, unknown> {
   command?: string;
   authToken: string;
   downloadFolder: string;
+  update?: boolean;
 }
 
 export interface Queues {

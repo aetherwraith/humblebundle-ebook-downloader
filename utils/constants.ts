@@ -25,13 +25,15 @@ const argBooleans = [
   "bundleFolders",
   "productFolders",
   "humanFileNames",
+  "update",
 ];
 const argDefaults = {
   dedup: true,
   bundleFolders: true,
   productFolders: true,
   humanFileNames: false,
-  parallel: 1,
+  update: false,
+  parallel: 5,
   format: SUPPORTED_FORMATS,
   platform: Object.values(Platform),
 };
@@ -43,6 +45,7 @@ const argAlias = {
   format: "f",
   platform: "p",
   bundleFolders: "b",
+  update: "u",
 };
 const argCollect = ["format", "platform"];
 export const argDescriptions = {
@@ -50,6 +53,7 @@ export const argDescriptions = {
   bundleFolders: "Arrange downloads in bundle folders",
   productFolders: "Individual product folders",
   humanFileNames: "Use human readable file names",
+  update: "Force fetch bundle details instead of using local cache",
   downloadFolder: "Download folder",
   parallel: "Parallel limit",
   authToken: "Authentication cookie from your browser (_simpleauth_sess)",

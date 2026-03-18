@@ -23,6 +23,21 @@ import { Platform } from "../types/bundle.ts";
 import { TrovePlatform } from "../types/trove.ts";
 
 export async function checkOptions(options: Options) {
+  if (!options.authToken && await exists("cookie.txt")) {
+    const cookieContent = await Deno.readTextFile("cookie.txt");
+    if (cookieContent.includes("_simpleauth_sess")) {
+      const lines = cookieContent.split("\n");
+      for (const line of lines) {
+        if (line.includes("_simpleauth_sess")) {
+          const parts = line.split(/[ \t]+/);
+          options.authToken = parts[parts.length - 1].trim();
+          break;
+        }
+      }
+    } else {
+      options.authToken = cookieContent.replace(/\n/g, "").trim();
+    }
+  }
   validateInitialOptions(options);
   if (
     options.authToken &&
@@ -67,6 +82,7 @@ function initializeOptionsToSave(): Options {
     downloadFolder: "",
     productFolders: false,
     humanFileNames: false,
+    update: false,
   };
 }
 
