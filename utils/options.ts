@@ -6,6 +6,7 @@ import * as log from "@std/log";
 import { resolve } from "@std/path";
 import sanitizeFilename from "sanitize-filename";
 import {
+  argAlias,
   argDescriptions,
   argNoSave,
   argRequired,
@@ -110,6 +111,23 @@ function processOptions(
   }
 }
 
+function isOptionExplicitlySet(key: string, args: string[]): boolean {
+  const flags = [`--${key}`, `--no-${key}`];
+  const alias = (argAlias as unknown as Record<string, string | string[]>)[key];
+  if (alias) {
+    if (Array.isArray(alias)) {
+      flags.push(...alias.map((a) => `-${a}`));
+    } else {
+      flags.push(`-${alias}`);
+    }
+  }
+
+  return args.some((arg) => {
+    // Exact match or prefix match for key=value
+    return flags.some((flag) => arg === flag || arg.startsWith(`${flag}=`));
+  });
+}
+
 function handleOptionDifferences(
   key: string,
   options: Options,
@@ -121,14 +139,21 @@ function handleOptionDifferences(
     Object.hasOwn(savedOptions, key) &&
     !isEql(savedOptions[key], options[key])
   ) {
-    const useNewValue = promptOptionChange(
-      key,
-      savedOptions[key],
-      options[key],
-    );
-    if (!useNewValue?.toLowerCase()?.includes("y")) {
+    if (!isOptionExplicitlySet(key, Deno.args)) {
+      // If it wasn't explicitly set on CLI, quietly use the saved option
       options[key] = savedOptions[key];
       optionsToSave[key] = savedOptions[key];
+    } else {
+      // It was explicitly set on CLI, so prompt the user to see if they want to override the saved value
+      const useNewValue = promptOptionChange(
+        key,
+        savedOptions[key],
+        options[key],
+      );
+      if (!useNewValue?.toLowerCase()?.includes("y")) {
+        options[key] = savedOptions[key];
+        optionsToSave[key] = savedOptions[key];
+      }
     }
   }
 }

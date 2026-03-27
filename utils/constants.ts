@@ -38,7 +38,7 @@ const argDefaults = {
   platform: Object.values(Platform),
 };
 const argStrings = ["downloadFolder", "authToken"];
-const argAlias = {
+export const argAlias = {
   downloadFolder: "d",
   parallel: "l",
   authToken: "t",
