@@ -6,8 +6,9 @@ import { checkSignatureMatch, computeFileHash } from "./checksums.ts";
 import { retryOptions } from "./constants.ts";
 import { StreamProgress } from "./streamProgress.ts";
 
-import { DownloadInfo, Queues, Totals } from "../types/general.ts";
+import { DownloadInfo, Options, Queues, Totals } from "../types/general.ts";
 import { Checksums } from "../types/bundle.ts";
+import { refreshDownloadUrl } from "./web.ts";
 
 export async function downloadItem(
   download: DownloadInfo,
@@ -16,6 +17,7 @@ export async function downloadItem(
   downloadProgress: SingleBarWrapper,
   totals: Totals,
   signal?: AbortSignal,
+  options?: Options,
 ): Promise<void> {
   if (
     signal?.aborted
@@ -29,7 +31,7 @@ export async function downloadItem(
 
     await retry(
       async () =>
-        await doDownload(download, progress, checksums, signal).catch((err) => {
+        await doDownload(download, progress, checksums, signal, options).catch((err) => {
           progress.log("Error downloading ", download.fileName);
           progress.log(err.message);
           if (err instanceof RetryError) {
@@ -50,6 +52,7 @@ export async function doDownload(
   progress: MultiBarWrapper,
   checksums: Record<string, Checksums>,
   signal?: AbortSignal,
+  options?: Options,
 ) {
   const filePath = resolve(download.filePath);
   await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
@@ -59,7 +62,21 @@ export async function doDownload(
     create: true,
   });
   const fileStream = saveFile.writable;
-  const req = await fetch(download.url, { signal });
+  let req = await fetch(download.url, { signal });
+  
+  if (!req.ok) {
+    if ((req.status === 403 || req.status === 401) && options) {
+      progress.log(`URL expired for ${download.fileName}, refreshing...`);
+      download.url = await refreshDownloadUrl(download, options);
+      req = await fetch(download.url, { signal });
+      if (!req.ok) {
+        throw new Error(`Failed to download after refresh: HTTP ${req.status} ${req.statusText}`);
+      }
+    } else {
+      throw new Error(`HTTP ${req.status}: ${req.statusText}`);
+    }
+  }
+
   const size = Number(req.headers.get("content-length"));
   if (!req.body) {
     throw new Error("Response body is empty");
@@ -82,6 +99,7 @@ export function downloadItems(
   queues: Queues,
   totals: Totals,
   signal?: AbortSignal,
+  options?: Options,
 ) {
   const downloadProgress = progress.create(filteredBundles.length, 0, {
     file: "Download Queue",
@@ -95,6 +113,7 @@ export function downloadItems(
         downloadProgress,
         totals,
         signal,
+        options,
       )
     );
   }

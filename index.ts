@@ -121,13 +121,13 @@ switch (options.command?.toLowerCase()) {
   case COMMANDS.ebooks: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     filteredBundles = filterEbooks(bundles, options, totals, progress);
-    downloadItems(filteredBundles, progress, checksums, queues, totals, signal);
+    downloadItems(filteredBundles, progress, checksums, queues, totals, signal, options);
     break;
   }
   case COMMANDS.all: {
     const bundles = await getAllBundles(options, totals, queues, progress);
     filteredBundles = await filterBundles(bundles, options, totals, progress);
-    downloadItems(filteredBundles, progress, checksums, queues, totals, signal);
+    downloadItems(filteredBundles, progress, checksums, queues, totals, signal, options);
     break;
   }
   case COMMANDS.trove: {
@@ -140,7 +140,7 @@ switch (options.command?.toLowerCase()) {
       progress,
       queues,
     );
-    downloadItems(filteredBundles, progress, checksums, queues, totals, signal);
+    downloadItems(filteredBundles, progress, checksums, queues, totals, signal, options);
   }
 }
 

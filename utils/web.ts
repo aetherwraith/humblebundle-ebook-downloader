@@ -2,7 +2,7 @@ import { MultiBarWrapper, SingleBarWrapper } from "./progressWrapper.ts";
 import { userAgent } from "./constants.ts";
 import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
 
-import { Options, Queues, Totals } from "../types/general.ts";
+import { DownloadInfo, Options, Queues, Totals } from "../types/general.ts";
 import { Trove } from "../types/trove.ts";
 import { Bundle, GameKey } from "../types/bundle.ts";
 
@@ -24,7 +24,7 @@ export function getRequestHeaders(options: Options): Headers {
 }
 
 // Function to fetch bundle details
-async function fetchBundleDetails(
+export async function fetchBundleDetails(
   baseUrl: string,
   gameKey: string,
   headers: Headers,
@@ -33,6 +33,32 @@ async function fetchBundleDetails(
     headers,
   });
   return await response.json();
+}
+
+export async function refreshDownloadUrl(
+  download: DownloadInfo,
+  options: Options,
+): Promise<URL> {
+  const bundleDetails: Bundle = await fetchBundleDetails(
+    BASE_URL,
+    download.gameKey,
+    getRequestHeaders(options),
+  );
+
+  for (const subProduct of bundleDetails.subproducts) {
+    if (subProduct.machine_name === download.machineName) {
+      for (const dl of subProduct.downloads) {
+        for (const struct of dl.download_struct) {
+          if ((struct.name ?? download.fileName) === download.structName) {
+            if (struct.url) {
+              return new URL(struct.url.web);
+            }
+          }
+        }
+      }
+    }
+  }
+  throw new Error(`Could not find updated URL for ${download.fileName}`);
 }
 
 // Main function to get all bundles

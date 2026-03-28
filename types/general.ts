@@ -36,6 +36,7 @@ export interface Queues {
 export interface DownloadInfo {
   date: Date;
   bundle: string;
+  gameKey: string;
   name: string;
   fileName: string;
   downloadPath: string;

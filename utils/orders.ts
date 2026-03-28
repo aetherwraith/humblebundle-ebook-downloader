@@ -51,6 +51,7 @@ function createDownloadInfo(
 
   return {
     bundle: bundle.product.human_name,
+    gameKey: bundle.gamekey,
     name: subProduct.human_name,
     machineName: subProduct.machine_name,
     fileName,

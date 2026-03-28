@@ -63,7 +63,7 @@ export const argDescriptions = {
     'Platform(s) to download. Can be specified multiple times. Will prioritise in the order given, i.e. if you say "-p linux -p win" will download linux format or win if linux does not exist, unless --no-dedup is specified.',
 };
 export const argRequired = ["downloadFolder"];
-export const argNoSave = ["downloadFolder", "authToken"];
+export const argNoSave = ["downloadFolder", "authToken", "update"];
 
 export const parseOptions: ParseOptions = {
   boolean: argBooleans,
