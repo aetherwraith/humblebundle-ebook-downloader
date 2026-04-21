@@ -10,42 +10,7 @@ import { DownloadInfo, Options, Queues, Totals } from "../types/general.ts";
 import { Checksums } from "../types/bundle.ts";
 import { refreshDownloadUrl } from "./web.ts";
 
-export async function downloadItem(
-  download: DownloadInfo,
-  checksums: Record<string, Checksums>,
-  progress: MultiBarWrapper,
-  downloadProgress: SingleBarWrapper,
-  totals: Totals,
-  signal?: AbortSignal,
-  options?: Options,
-): Promise<void> {
-  if (
-    signal?.aborted
-  ) {
-    return;
-  }
-  if (
-    !(await checkSignatureMatch(download, checksums, progress, totals))
-  ) {
-    totals.downloads++;
 
-    await retry(
-      async () =>
-        await doDownload(download, progress, checksums, signal, options).catch((err) => {
-          progress.log("Error downloading ", download.fileName);
-          progress.log(err.message);
-          if (err instanceof RetryError) {
-            progress.log("Retry error :", err.message);
-            progress.log("Error cause :", err.cause);
-          }
-          throw err;
-        }),
-      retryOptions,
-    );
-  }
-  totals.doneDownloads++;
-  downloadProgress.increment();
-}
 
 export async function doDownload(
   download: DownloadInfo,
@@ -105,16 +70,38 @@ export function downloadItems(
     file: "Download Queue",
   });
   for (const download of filteredBundles) {
-    queues.downloads.add(() =>
-      downloadItem(
-        download,
-        checksums,
-        progress,
-        downloadProgress,
-        totals,
-        signal,
-        options,
-      )
-    );
+    queues.fileCheck.add(async () => {
+      if (signal?.aborted) return;
+
+      const match = await checkSignatureMatch(download, checksums, progress, totals);
+      if (signal?.aborted) return;
+
+      if (!match) {
+        totals.downloads++;
+        queues.downloads.add(async () => {
+          if (signal?.aborted) return;
+          
+          await retry(
+            async () =>
+              await doDownload(download, progress, checksums, signal, options).catch((err) => {
+                progress.log("Error downloading ", download.fileName);
+                progress.log(err.message);
+                if (err instanceof RetryError) {
+                  progress.log("Retry error :", err.message);
+                  progress.log("Error cause :", err.cause);
+                }
+                throw err;
+              }),
+            retryOptions,
+          );
+          
+          totals.doneDownloads++;
+          downloadProgress.increment();
+        });
+      } else {
+        totals.doneDownloads++;
+        downloadProgress.increment();
+      }
+    });
   }
 }
