@@ -1,7 +1,7 @@
 import { retry, RetryError } from "@std/async";
 import { cyan } from "@std/fmt/colors";
 import { resolve } from "@std/path/resolve";
-import { MultiBarWrapper, SingleBarWrapper } from "./progressWrapper.ts";
+import { MultiBarWrapper } from "./progressWrapper.ts";
 import { checkSignatureMatch, computeFileHash } from "./checksums.ts";
 import { retryOptions } from "./constants.ts";
 import { StreamProgress } from "./streamProgress.ts";
