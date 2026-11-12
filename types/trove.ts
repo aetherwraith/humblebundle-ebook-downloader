@@ -1,5 +1,6 @@
 export interface Trove {
   machine_name: string;
+  subProductId?: string;
   "hero-marketing-blurb": null;
   "hero-background-image": null;
   image: string;

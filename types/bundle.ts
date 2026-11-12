@@ -3,8 +3,11 @@ export interface GameKey {
 }
 
 export interface Checksums {
-  sha1: string;
-  md5: string;
+  sha1?: string;
+  md5?: string;
+  hashErrors?: number;
+  verifiedSize?: number;
+  verifiedMtime?: number;
 }
 
 export interface Bundle {
@@ -51,6 +54,7 @@ export enum Category {
 }
 
 export interface SubProduct {
+  entitlement_id?: string;
   machine_name: string;
   url: string;
   downloads: Download[];
@@ -63,8 +67,7 @@ export interface SubProduct {
   display_item?: DisplayItem;
 }
 
-// deno-lint-ignore no-empty-interface
-export interface CustomDownloadPageBoxHTMLClass {}
+export type CustomDownloadPageBoxHTMLClass = Record<string, unknown>;
 
 export interface DisplayItem {
   publishers: Publisher[] | null;

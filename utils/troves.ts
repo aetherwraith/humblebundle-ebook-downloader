@@ -1,19 +1,33 @@
 import { yellow } from "@std/fmt/colors";
-import { basename, resolve } from "@std/path";
+import { basename, extname, resolve } from "@std/path";
 import { MultiBarWrapper } from "./progressWrapper.ts";
-import sanitizeFilename from "sanitize-filename";
+import {
+  compileItemFilters,
+  resolveOutputTemplate,
+  sanitizeFilename,
+  sortDownloads,
+} from "./generic.ts";
 
-import { DownloadInfo, Options, Queues, Totals } from "../types/general.ts";
+import { DownloadInfo, Options, Totals } from "../types/general.ts";
 import { Trove } from "../types/trove.ts";
-import { getTroveURL } from "./web.ts";
 
-export async function filterTroves(
+/**
+ * Filters Humble Trove catalogue items by supported platforms and formats them
+ * into DownloadInfo items. Signed download URLs are resolved lazily at download time
+ * (via `webFilename`) to avoid unnecessary API calls for already-verified local files.
+ *
+ * @param troves Array of Trove catalog items
+ * @param options Runtime options (platform, downloadFolder)
+ * @param totals Statistics tracker
+ * @param progress MultiBarWrapper progress logger
+ * @returns Sorted array of DownloadInfo items
+ */
+export function filterTroves(
   troves: Trove[],
   options: Options,
   totals: Totals,
   progress: MultiBarWrapper,
-  queues: Queues,
-) {
+): DownloadInfo[] {
   progress.log(
     `${
       yellow(
@@ -23,47 +37,94 @@ export async function filterTroves(
   );
   const downloads: DownloadInfo[] = [];
 
-  options.platform.forEach((platform) => {
-    troves.forEach((trove) => {
+  const platforms = options.platform ?? [];
+  const filters = compileItemFilters(options);
+  for (const platform of platforms) {
+    for (const trove of troves) {
+      if (
+        !filters.matchesBundleKey(trove.machine_name) ||
+        !filters.matchesText(trove["human-name"], trove.machine_name)
+      ) {
+        continue;
+      }
       if (Object.hasOwn(trove.downloads, platform)) {
-        queues.orderInfo.add(async () => {
-          const download = trove.downloads[platform];
-          if (!download) return;
-          const url = await getTroveURL(
-            download.machine_name,
-            download.url.web,
-            options,
+        const download = trove.downloads[platform];
+        if (!download) continue;
+        if (!filters.matchesSize(download.file_size)) {
+          continue;
+        }
+        const placeholderUrl = new URL(
+          download.url.web,
+          "https://www.humblebundle.com/",
+        );
+        const rawBaseName = decodeURIComponent(basename(placeholderUrl.pathname));
+        const rawTimestamp =
+          download.uploaded_at || download.timestamp || trove["date-added"];
+        const timestampMs =
+          rawTimestamp < 1e11 ? rawTimestamp * 1000 : rawTimestamp;
+        const itemDate = new Date(timestampMs);
+        if (!filters.matchesDate(itemDate)) {
+          continue;
+        }
+
+        const publisher = trove.publishers?.[0]?.["publisher-name"] ??
+          trove.developers?.[0]?.["developer-name"];
+
+        let fileName: string;
+        let downloadPath: string;
+        let filePath: string;
+        if (options.outputTemplate) {
+          const ext = extname(rawBaseName);
+          const resolved = resolveOutputTemplate(
+            options.downloadFolder,
+            options.outputTemplate,
+            {
+              bundle: trove["human-name"],
+              publisher,
+              product: trove["human-name"],
+              format: platform,
+              ext,
+              year: itemDate.getUTCFullYear().toString(),
+              filename: rawBaseName,
+            },
           );
-          const fileName = sanitizeFilename(basename(url.pathname));
-          const downloadPath = resolve(
+          fileName = resolved.fileName;
+          downloadPath = resolved.downloadPath;
+          filePath = resolved.filePath;
+        } else {
+          fileName = sanitizeFilename(rawBaseName);
+          downloadPath = resolve(
             options.downloadFolder,
             sanitizeFilename(trove["human-name"]),
           );
-          const filePath = resolve(downloadPath, fileName);
-          downloads.push({
-            bundle: trove["human-name"],
-            name: trove["human-name"],
-            machineName: download.machine_name,
-            fileName,
-            downloadPath,
-            filePath,
-            url,
-            sha1: download.sha1,
-            md5: download.md5,
-            structName: fileName,
-            date: new Date(
-              download.uploaded_at || download.timestamp * 1000 ||
-                trove["date-added"] * 1000,
-            ),
-            file_size: download.file_size,
-          });
+          filePath = resolve(downloadPath, fileName);
+        }
+
+        downloads.push({
+          bundle: trove["human-name"],
+          gameKey: trove.machine_name,
+          subProductId: trove.subProductId ??
+            trove.machine_name.replace(/_trove$/i, ""),
+          name: trove["human-name"],
+          publisher,
+          icon: trove.image,
+          machineName: download.machine_name,
+          fileName,
+          downloadPath,
+          filePath,
+          url: placeholderUrl,
+          webFilename: options.torrent && download.url.bittorrent
+            ? download.url.bittorrent
+            : download.url.web,
+          sha1: download.sha1,
+          md5: download.md5,
+          structName: fileName,
+          date: itemDate,
+          file_size: download.file_size,
         });
       }
-    });
-  });
-  await queues.orderInfo.done();
+    }
+  }
   totals.filteredDownloads = downloads.length;
-  return downloads.sort((a, b) =>
-    (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name)
-  );
+  return sortDownloads(downloads);
 }

@@ -1,50 +1,46 @@
-# Humble Bundle Ebook Downloader
+# Humble Bundle Ebook Downloader (v4.0.0)
 
 ## Description
-An easy way to download ebooks from your Humble Bundle account. This tool is built with **Deno**.
+A fast, concurrent CLI tool built with **Deno** to download, verify, and sync ebooks, comics, audiobooks/soundtracks, videos, games, and Humble Vault (Trove) items from Humble Bundle's Next.js + Ory Kratos platform.
 
 ## Tech Stack
-- **Runtime**: Deno
+- **Runtime**: Deno (v1.40+ / v2.x)
 - **Language**: TypeScript
-- **Dependencies**: 
-  - `@henrygd/queue` (concurrency)
-  - `@std/*` (standard library)
+- **Dependencies**:
+  - `@henrygd/queue` (bounded concurrency queues)
+  - `@std/*` (standard library: assert, async, cli, collections, crypto, encoding, fmt, fs, path)
 
 ## Project Structure
 
-### Entry Point
-- **`index.ts`**: The main entry point. Handles argument parsing, queue initialization, and command dispatching.
+### Entry Point & Config
+- **`index.ts`**: Main CLI entry point. Parses arguments, manages signal shutdown, initializes concurrency queues (`fileCheck`, `orderInfo`, `downloads`), and dispatches commands.
+- **`deno.json`**: Deno configuration (`version: "4.0.0"`, import map, `deno task test` and `deno task check`).
 
-### Configuration
-- **`deno.json`**: Deno configuration file, including imports and version.
+### Core Modules (`utils/`)
+- `constants.ts`: Version, `COMMANDS`, `DEFAULT_FORMATS` (`cb?`, `epub`, `pdf_hd`, `pdf`, `mobi`), `DEFAULT_AUDIO_FORMATS`, `SUPPORTED_VIDEO_QUALITIES`, CLI flag aliases, and defaults.
+- `web.ts`: Humble Bundle Next.js App Router integration — Netscape `cookie.txt` / Ory Kratos session cookie handling, `RSC: 1` React Flight stream parser (`parseRscStream`, `resolveFlightRefs`), dynamic Next.js Server Action discovery (`filterUserLibrary`, `getSignedUrlsForEntitlements`, `getVaultSignedUrls`), URL signing micro-batching, and `bundles.legacy.json` / `troves.archive.json` preservation.
+- `orders.ts`: Filtering, deduplication, and format/quality prioritization across `filterEbooks`, `filterAudio`, `filterVideos`, and `filterBundles` (`selectVideoStructs`, `selectAudioStructs`).
+- `download.ts`: Resumable `.part` HTTP Range downloads, signed URL refresh on 401/403, hardlink/relocation deduplication, `.opf` & cover sidecars, archive extraction, and `verifyItems` / `repair`.
+- `troves.ts`: Humble Vault (Trove) platform filtering and `DownloadInfo` construction.
+- `fileUtils.ts`: Atomic JSON read/write, dirty-tracked `checksums.json` cache, safe `clean()` (protecting `.opf` and cover sidecars), `.m3u8` playlists, `catalog.json`/`catalog.csv` export, `stats`, `bundles`, and `unclaimed` reports.
+- `checksums.ts`: Streaming SHA-1/MD5 hashing, signature verification, file relocation/hardlinking, and `--deep` binary header/trailer validation (`.pdf`, `.epub`, `.cbz`, `.cbr`, `.zip`, `.gz`, `.bz2`, `.xz`, `.mobi`, `.prc`).
+- `generic.ts`: `parseCookieInput`, `normalizeBundleKey`, `expandFormatPreferences` (`cb?` -> `cbz`, `cbr`, `cb7`, `cbt`, `cba`), `detectAudioFormat`, `detectVideoQuality`, filename sanitization, and filter/date/size matchers.
+- `options.ts`: CLI argument validation, `.humblerc.json` + `HUMBLE_*` env var merging, `options.json` persistence, and `bash`/`zsh`/`fish` shell completions.
+- `progressWrapper.ts` & `streamProgress.ts`: ANSI-aware multi-bar terminal progress renderer, file logger, and global token-bucket bandwidth limiter.
+- `formatNumbers.ts`: Byte size, percentage, and duration formatters.
 
-### Directories
-- **`utils/`**: Contains utility functions and logic.
-  - `constants.ts`: Global constants, command definitions, CLI arguments.
-  - `download.ts`: Logic for downloading items.
-  - `web.ts`: Functions for interacting with the Humble Bundle API.
-  - `troves.ts`: Handling of Humble Trove downloads.
-  - `fileUtils.ts`: File system operations (cleaning, loading checksums).
-  - `checksums.ts`: Checksum calculation logic.
-  - `progressWrapper.ts`: Custom progress bar implementation wrapper.
-- **`types/`**: TypeScript type definitions.
-  - `bundle.ts`: Types related to Humble Bundles and their contents.
-  - `general.ts`: General application types (Options, DownloadInfo).
+### Types & Tests
+- **`types/`**: `general.ts`, `bundle.ts`, `trove.ts`.
+- **`tests/utils/`**: Unit test suite covering all utility modules (`deno task test`).
 
 ## Commands
-The tool supports the following commands (defined in `utils/constants.ts`):
-- `ebooks`: Download ebooks.
-- `all`: Download all bundles.
-- `trove`: Download Humble Trove items.
-- `checksums`: Calculate checksums of existing files.
-- `cleanup`: Organize and clean up downloaded files.
-
-## Usage
-`deno run --allow-net --allow-read --allow-write --allow-env index.ts [command] [options]`
-
-Common options:
-- `-d, --download-folder`: Output directory.
-- `-t, --auth-token`: Authentication cookie (`_simpleauth_sess`). Auto-detected if `cookie.txt` exists.
-- `-l, --parallel`: Parallel download limit (default: 5).
-- `-f, --format`: Ebook formats (cbz, epub, mobi, pdf, pdf_hd).
-- `-u, --update`: Force refresh bundle info from API (skip local cache).
+- `ebooks`: Download ebooks & comics with format priority (`-f`, default `cb?` -> `epub` -> `pdf_hd` -> `pdf` -> `mobi`).
+- `audio`: Download soundtracks, audiobooks, and comedy albums with codec priority (`-a`, default `flac` -> `alac` -> `wav` -> `aiff` -> `m4b` -> `m4a` -> `aac` -> `ogg` -> `opus` -> `mp3`).
+- `videos` (alias `video`): Download videos, courses, and comedy specials with resolution priority (`-q`, default `best`).
+- `all`: Download all items matching selected `-p` platforms.
+- `trove`: Download Humble Vault (Trove) items.
+- `verify` / `repair`: Verify local files from disk (with optional `--deep` binary checks) and repair corrupted/missing files.
+- `stats` (`list`), `bundles`, `unclaimed`, `export`: Library inspection and catalog export commands.
+- `checksums`: Precompute and cache SHA-1/MD5 hashes of existing local files.
+- `cleanup`, `cleanupaudio`, `cleanupebooks`, `cleanuptrove`, `cleanupvideos`: Remove local files not in the resolved download set.
+- `completions [bash|zsh|fish]`: Output shell tab-completion script.
