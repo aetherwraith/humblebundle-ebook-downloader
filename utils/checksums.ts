@@ -174,17 +174,27 @@ export async function checkSignatureMatch(
   );
   const previousEntry = checksums[cacheKey] ?? checksums[download.fileName];
 
-  const hash = await getOrComputeChecksum(
+  const { entry: hash, fromDisk } = await getOrComputeChecksum(
     download,
     stat.size,
     stat.mtime?.getTime(),
     checksums,
     progress,
     totals,
-    downloadFolder,
+    cacheKey,
+    previousEntry,
   );
   const verified = isHashVerified(download, hash);
   if (verified) return true;
+
+  const logRecordedMismatchSkip = (count: number) => {
+    progressDebug(
+      progress,
+      `Skipping ${download.fileName}: matches file on disk (${count} recorded API hash mismatch${
+        count === 1 ? "" : "es"
+      })`,
+    );
+  };
 
   // If this file already had a recorded API hash mismatch and the file on disk
   // still matches that cached entry's hash and size (if recorded), skip re-downloading.
@@ -198,21 +208,19 @@ export async function checkSignatureMatch(
       fileMtime !== undefined &&
       previousEntry.verifiedMtime === fileMtime
     ) {
-      progressDebug(
-        progress,
-        `Skipping ${download.fileName}: matches file on disk (${previousEntry.hashErrors} recorded API hash mismatch${
-          previousEntry.hashErrors === 1 ? "" : "es"
-        })`,
-      );
+      logRecordedMismatchSkip(previousEntry.hashErrors);
       return true;
     }
 
-    // Otherwise re-hash the file on disk to verify it hasn't been corrupted or modified since
-    const diskHash = await checksum(download.filePath, progress, stat.size, {
-      sha1: Boolean(previousEntry.sha1),
-      md5: Boolean(previousEntry.md5),
-    });
-    totals.checksums++;
+    // Reuse diskHash if getOrComputeChecksum already hashed the file on this call;
+    // otherwise hash once now.
+    const diskHash = fromDisk
+      ? hash
+      : await checksum(download.filePath, progress, stat.size, {
+        sha1: Boolean(previousEntry.sha1),
+        md5: Boolean(previousEntry.md5),
+      });
+    if (!fromDisk) totals.checksums++;
 
     if (
       (!previousEntry.verifiedSize ||
@@ -225,19 +233,14 @@ export async function checkSignatureMatch(
         previousEntry.verifiedSize = stat.size;
         checksums[cacheKey] = previousEntry;
       }
-      progressDebug(
-        progress,
-        `Skipping ${download.fileName}: matches file on disk (${previousEntry.hashErrors} recorded API hash mismatch${
-          previousEntry.hashErrors === 1 ? "" : "es"
-        })`,
-      );
+      logRecordedMismatchSkip(previousEntry.hashErrors);
       return true;
     }
   }
 
-  // Otherwise, record the hash mismatch and compute the actual disk file hash if we were looking at a stale cache entry
+  // Otherwise, record the hash mismatch and compute the actual disk file hash only if we didn't just hash from disk
   let diskHash = hash;
-  if (previousEntry) {
+  if (previousEntry && !fromDisk) {
     diskHash = await checksum(download.filePath, progress, stat.size, {
       sha1: true,
       md5: true,
@@ -258,8 +261,14 @@ export async function checkSignatureMatch(
     progress,
     `Hash verification failed for ${download.fileName} (error #${errorCount})`,
   );
-  progressDebug(progress, `calculated: ${diskHash.sha1 ?? ""} ${diskHash.md5 ?? ""}`);
-  progressDebug(progress, `expected: ${download.sha1 ?? ""} ${download.md5 ?? ""}`);
+  progressDebug(
+    progress,
+    `calculated: ${diskHash.sha1 ?? ""} ${diskHash.md5 ?? ""}`,
+  );
+  progressDebug(
+    progress,
+    `expected: ${download.sha1 ?? ""} ${download.md5 ?? ""}`,
+  );
   return false;
 }
 
@@ -275,20 +284,15 @@ async function getOrComputeChecksum(
   checksums: Record<string, Checksums>,
   progress: MultiBarWrapper,
   totals: Totals,
-  downloadFolder?: string,
-): Promise<Checksums> {
-  const cacheKey = getChecksumCacheKey(
-    download.filePath,
-    download.fileName,
-    downloadFolder,
-  );
-  const cached = checksums[cacheKey] ?? checksums[download.fileName];
+  cacheKey: string,
+  cached?: Checksums,
+): Promise<{ entry: Checksums; fromDisk: boolean }> {
   const hashOptions = getRequiredHashOptions(download);
   const needSha1 = Boolean(hashOptions.sha1);
   const needMd5 = Boolean(hashOptions.md5);
 
-  const sizeMatchesCache =
-    cached?.verifiedSize === undefined || cached.verifiedSize === fileSize;
+  const sizeMatchesCache = cached?.verifiedSize === undefined ||
+    cached.verifiedSize === fileSize;
 
   if (
     cached &&
@@ -306,7 +310,7 @@ async function getOrComputeChecksum(
     if (cacheKey !== download.fileName && !checksums[cacheKey]) {
       checksums[cacheKey] = cached;
     }
-    return cached;
+    return { entry: cached, fromDisk: false };
   }
 
   const hash = await checksum(
@@ -322,7 +326,7 @@ async function getOrComputeChecksum(
     verifiedSize: fileSize,
     ...(fileMtime !== undefined ? { verifiedMtime: fileMtime } : {}),
   };
-  return checksums[cacheKey];
+  return { entry: checksums[cacheKey], fromDisk: true };
 }
 
 /**
@@ -348,6 +352,18 @@ export function addChecksumToHashIndex(
   addKey(entry.md5);
 }
 
+export function removeChecksumFromHashIndex(
+  index: Map<string, Set<string>>,
+  cacheKey: string,
+  entry?: Checksums,
+): void {
+  if (!entry) return;
+  const s1 = entry.sha1?.trim().toLowerCase();
+  const m5 = entry.md5?.trim().toLowerCase();
+  if (s1) index.get(s1)?.delete(cacheKey);
+  if (m5) index.get(m5)?.delete(cacheKey);
+}
+
 /**
  * Builds an O(1) lookup index mapping lowercase hash strings (sha1 and md5)
  * to sets of cache keys in `checksums`.
@@ -362,7 +378,15 @@ export function buildChecksumHashIndex(
   return index;
 }
 
-const SIDECAR_EXTENSIONS = [".opf", ".jpg", ".jpeg", ".png", ".webp", ".gif"];
+const SIDECAR_EXTENSIONS = [
+  ".opf",
+  ".nfo",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".gif",
+];
 
 function findCandidateCacheKeys(
   download: DownloadInfo,
@@ -398,6 +422,52 @@ function findCandidateCacheKeys(
  *
  * @returns True if an existing matching file was found and moved to `download.filePath`
  */
+interface VerifiedCandidate {
+  key: string;
+  cachedHash: Checksums;
+  candidatePath: string;
+  stat: Deno.FileInfo;
+}
+
+async function findVerifiedCandidateOnDisk(
+  download: DownloadInfo,
+  checksums: Record<string, Checksums>,
+  downloadFolder: string,
+  targetLower: string,
+  hashIndex?: Map<string, Set<string>>,
+  activeTargetPaths?: ReadonlySet<string>,
+  requireExactSize = false,
+): Promise<VerifiedCandidate | undefined> {
+  const candidateKeys = findCandidateCacheKeys(download, checksums, hashIndex);
+  const resolvedFolder = resolveDownloadFolderFast(downloadFolder);
+
+  for (const key of candidateKeys) {
+    const cachedHash = checksums[key];
+    if (!cachedHash || !isHashVerified(download, cachedHash)) continue;
+
+    const candidatePath = resolve(resolvedFolder, key);
+    const candidateLower = candidatePath.toLowerCase();
+    if (candidateLower === targetLower) continue;
+    if (activeTargetPaths?.has(candidateLower)) continue;
+
+    try {
+      const stat = await Deno.stat(candidatePath);
+      if (!stat.isFile) continue;
+      if (
+        requireExactSize &&
+        cachedHash.verifiedSize !== undefined &&
+        cachedHash.verifiedSize !== stat.size
+      ) {
+        continue;
+      }
+      return { key, cachedHash, candidatePath, stat };
+    } catch {
+      // Candidate file does not exist on disk
+    }
+  }
+  return undefined;
+}
+
 export async function tryRelocateExistingFile(
   download: DownloadInfo,
   checksums: Record<string, Checksums>,
@@ -410,86 +480,63 @@ export async function tryRelocateExistingFile(
 ): Promise<boolean> {
   if (!downloadFolder || (!download.sha1 && !download.md5)) return false;
 
-  const candidateKeys = findCandidateCacheKeys(download, checksums, hashIndex);
-  const resolvedFolder = resolveDownloadFolderFast(downloadFolder);
   const targetPath = resolve(download.filePath);
+  const candidate = await findVerifiedCandidateOnDisk(
+    download,
+    checksums,
+    downloadFolder,
+    targetPath.toLowerCase(),
+    hashIndex,
+    activeTargetPaths,
+  );
+  if (!candidate) return false;
 
-  for (const key of candidateKeys) {
-    const cachedHash = checksums[key];
-    if (!cachedHash || !isHashVerified(download, cachedHash)) continue;
-
-    const candidatePath = resolve(resolvedFolder, key);
-    if (candidatePath.toLowerCase() === targetPath.toLowerCase()) {
-      continue;
-    }
-    if (activeTargetPaths?.has(candidatePath.toLowerCase())) {
-      continue;
-    }
-
-    try {
-      const stat = await Deno.stat(candidatePath);
-      if (!stat.isFile) continue;
-
-      if (dryRun) {
-        progress.log(
-          `[Dry Run] Would relocate existing file: ${key} -> ${download.filePath}`,
-        );
-        totals.movedFiles = (totals.movedFiles ?? 0) + 1;
-        return true;
-      }
-
-      await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
-      await Deno.rename(candidatePath, targetPath);
-
-      // Also relocate any existing .opf or cover image sidecars next to candidatePath
-      const candidateStem = stripFileExtension(candidatePath);
-      const targetStem = stripFileExtension(targetPath);
-      for (const ext of SIDECAR_EXTENSIONS) {
-        const oldSidecar = `${candidateStem}${ext}`;
-        const newSidecar = `${targetStem}${ext}`;
-        try {
-          const sStat = await Deno.stat(oldSidecar);
-          if (sStat.isFile) {
-            await Deno.rename(oldSidecar, newSidecar).catch(() => {});
-          }
-        } catch {
-          // Sidecar does not exist
-        }
-      }
-
-      const newKey = getChecksumCacheKey(
-        download.filePath,
-        download.fileName,
-        downloadFolder,
-      );
-      checksums[newKey] = cachedHash;
-      if (newKey !== key) {
-        delete checksums[key];
-        if (hashIndex) {
-          const s1 = cachedHash.sha1?.trim().toLowerCase();
-          const m5 = cachedHash.md5?.trim().toLowerCase();
-          if (s1) {
-            hashIndex.get(s1)?.delete(key);
-            hashIndex.get(s1)?.add(newKey);
-          }
-          if (m5) {
-            hashIndex.get(m5)?.delete(key);
-            hashIndex.get(m5)?.add(newKey);
-          }
-        }
-      }
-      totals.movedFiles = (totals.movedFiles ?? 0) + 1;
-      progressDebug(
-        progress,
-        `Relocated existing verified file: ${key} -> ${newKey}`,
-      );
-      return true;
-    } catch {
-      // Candidate file does not exist on disk or could not be moved
-    }
+  const { key, cachedHash, candidatePath } = candidate;
+  if (dryRun) {
+    progress.log(
+      `[Dry Run] Would relocate existing file: ${key} -> ${download.filePath}`,
+    );
+    totals.movedFiles = (totals.movedFiles ?? 0) + 1;
+    return true;
   }
 
-  return false;
+  try {
+    await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
+    await Deno.rename(candidatePath, targetPath);
+
+    // Also relocate any existing .opf, .nfo, or cover image sidecars in parallel
+    const candidateStem = stripFileExtension(candidatePath);
+    const targetStem = stripFileExtension(targetPath);
+    await Promise.all(
+      SIDECAR_EXTENSIONS.map((ext) =>
+        Deno.rename(`${candidateStem}${ext}`, `${targetStem}${ext}`).catch(
+          () => {},
+        )
+      ),
+    );
+
+    const newKey = getChecksumCacheKey(
+      download.filePath,
+      download.fileName,
+      downloadFolder,
+    );
+    checksums[newKey] = cachedHash;
+    if (newKey !== key) {
+      delete checksums[key];
+      if (hashIndex) {
+        removeChecksumFromHashIndex(hashIndex, key, cachedHash);
+        addChecksumToHashIndex(hashIndex, newKey, cachedHash);
+      }
+    }
+    totals.movedFiles = (totals.movedFiles ?? 0) + 1;
+    progressDebug(
+      progress,
+      `Relocated existing verified file: ${key} -> ${newKey}`,
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -508,68 +555,109 @@ export async function tryHardlinkExistingFile(
 ): Promise<boolean> {
   if (!downloadFolder || (!download.sha1 && !download.md5)) return false;
 
-  const candidateKeys = findCandidateCacheKeys(download, checksums, hashIndex);
-  const resolvedFolder = resolveDownloadFolderFast(downloadFolder);
   const targetPath = resolve(download.filePath);
+  const candidate = await findVerifiedCandidateOnDisk(
+    download,
+    checksums,
+    downloadFolder,
+    targetPath.toLowerCase(),
+    hashIndex,
+    undefined,
+    true,
+  );
+  if (!candidate) return false;
 
-  for (const key of candidateKeys) {
-    const cachedHash = checksums[key];
-    if (!cachedHash || !isHashVerified(download, cachedHash)) continue;
-
-    const candidatePath = resolve(resolvedFolder, key);
-    if (candidatePath.toLowerCase() === targetPath.toLowerCase()) continue;
-
-    try {
-      const stat = await Deno.stat(candidatePath);
-      if (!stat.isFile) continue;
-      if (
-        cachedHash.verifiedSize !== undefined &&
-        cachedHash.verifiedSize !== stat.size
-      ) {
-        continue;
-      }
-
-      if (dryRun) {
-        progress.log(
-          `[Dry Run] Would hardlink duplicate file: ${key} -> ${download.filePath}`,
-        );
-        totals.linkedFiles = (totals.linkedFiles ?? 0) + 1;
-        return true;
-      }
-
-      await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
-      try {
-        await Deno.link(candidatePath, targetPath);
-      } catch {
-        await Deno.copyFile(candidatePath, targetPath);
-      }
-
-      const newKey = getChecksumCacheKey(
-        download.filePath,
-        download.fileName,
-        downloadFolder,
-      );
-      const entryCopy: Checksums = {
-        ...cachedHash,
-        verifiedSize: stat.size,
-        ...(stat.mtime ? { verifiedMtime: stat.mtime.getTime() } : {}),
-      };
-      checksums[newKey] = entryCopy;
-      if (hashIndex) {
-        addChecksumToHashIndex(hashIndex, newKey, entryCopy);
-      }
-      totals.linkedFiles = (totals.linkedFiles ?? 0) + 1;
-      progressDebug(
-        progress,
-        `Linked duplicate verified file: ${key} -> ${newKey}`,
-      );
-      return true;
-    } catch {
-      // Candidate file not accessible
-    }
+  const { key, cachedHash, candidatePath, stat } = candidate;
+  if (dryRun) {
+    progress.log(
+      `[Dry Run] Would hardlink duplicate file: ${key} -> ${download.filePath}`,
+    );
+    totals.linkedFiles = (totals.linkedFiles ?? 0) + 1;
+    return true;
   }
 
-  return false;
+  try {
+    await Deno.mkdir(resolve(download.downloadPath), { recursive: true });
+    try {
+      await Deno.link(candidatePath, targetPath);
+    } catch {
+      await Deno.copyFile(candidatePath, targetPath);
+    }
+
+    // Hardlink/copy matching sidecars alongside the duplicated file
+    const candidateStem = stripFileExtension(candidatePath);
+    const targetStem = stripFileExtension(targetPath);
+    await Promise.all(
+      SIDECAR_EXTENSIONS.map(async (ext) => {
+        const oldSidecar = `${candidateStem}${ext}`;
+        const newSidecar = `${targetStem}${ext}`;
+        try {
+          await Deno.link(oldSidecar, newSidecar);
+        } catch {
+          await Deno.copyFile(oldSidecar, newSidecar).catch(() => {});
+        }
+      }),
+    );
+
+    const newKey = getChecksumCacheKey(
+      download.filePath,
+      download.fileName,
+      downloadFolder,
+    );
+    const entryCopy: Checksums = {
+      ...cachedHash,
+      verifiedSize: stat.size,
+      ...(stat.mtime ? { verifiedMtime: stat.mtime.getTime() } : {}),
+    };
+    checksums[newKey] = entryCopy;
+    if (hashIndex) {
+      addChecksumToHashIndex(hashIndex, newKey, entryCopy);
+    }
+    totals.linkedFiles = (totals.linkedFiles ?? 0) + 1;
+    progressDebug(
+      progress,
+      `Linked duplicate verified file: ${key} -> ${newKey}`,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Prunes entries from `checksums` whose corresponding files no longer exist on disk.
+ */
+export async function pruneMissingChecksums(
+  checksums: Record<string, Checksums>,
+  downloadFolder: string,
+  dryRun = false,
+): Promise<number> {
+  const resolvedFolder = resolveDownloadFolderFast(downloadFolder);
+  const keys = Object.keys(checksums);
+  let pruned = 0;
+  const BATCH_SIZE = 32;
+  for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+    const batch = keys.slice(i, i + BATCH_SIZE);
+    const existsList = await Promise.all(
+      batch.map(async (k) => {
+        try {
+          const st = await Deno.stat(resolve(resolvedFolder, k));
+          return st.isFile;
+        } catch {
+          return false;
+        }
+      }),
+    );
+    for (let j = 0; j < batch.length; j++) {
+      if (!existsList[j]) {
+        pruned++;
+        if (!dryRun) {
+          delete checksums[batch[j]];
+        }
+      }
+    }
+  }
+  return pruned;
 }
 
 const latin1Decoder = new TextDecoder("latin1");
@@ -613,14 +701,21 @@ export async function validateFileStructure(
 
     if (lower.endsWith(".pdf")) {
       if (size < 16) return { valid: false, reason: "PDF file too small" };
-      const head = latin1Decoder.decode(await readChunk(0, Math.min(size, 1024)));
+      const head = latin1Decoder.decode(
+        await readChunk(0, Math.min(size, 1024)),
+      );
       if (!head.includes("%PDF-")) {
         return { valid: false, reason: "Missing %PDF- header" };
       }
       const tailLen = Math.min(size, 2048);
-      const tail = latin1Decoder.decode(await readChunk(size - tailLen, tailLen));
+      const tail = latin1Decoder.decode(
+        await readChunk(size - tailLen, tailLen),
+      );
       if (!tail.includes("%%EOF")) {
-        return { valid: false, reason: "Missing %%EOF trailer (truncated PDF)" };
+        return {
+          valid: false,
+          reason: "Missing %%EOF trailer (truncated PDF)",
+        };
       }
       return { valid: true };
     }
@@ -634,16 +729,16 @@ export async function validateFileStructure(
         return { valid: false, reason: "ZIP/EPUB/CBZ archive too small" };
       }
       const head = await readChunk(0, 4);
-      const isLocalHeader =
-        head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
-      const isEmptyArchive =
-        head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x05 && head[3] === 0x06;
+      const isLocalHeader = head[0] === 0x50 && head[1] === 0x4b &&
+        head[2] === 0x03 && head[3] === 0x04;
+      const isEmptyArchive = head[0] === 0x50 && head[1] === 0x4b &&
+        head[2] === 0x05 && head[3] === 0x06;
       if (!isLocalHeader && !isEmptyArchive) {
         return { valid: false, reason: "Missing PKZIP magic header" };
       }
       const tailLen = Math.min(size, 65558);
       const tail = await readChunk(size - tailLen, tailLen);
-      let foundEocd = false;
+      let eocdIdx = -1;
       for (let i = tail.length - 22; i >= 0; i--) {
         if (
           tail[i] === 0x50 &&
@@ -651,15 +746,44 @@ export async function validateFileStructure(
           tail[i + 2] === 0x05 &&
           tail[i + 3] === 0x06
         ) {
-          foundEocd = true;
+          eocdIdx = i;
           break;
         }
       }
-      if (!foundEocd) {
+      if (eocdIdx === -1) {
         return {
           valid: false,
-          reason: "Missing ZIP End of Central Directory record (truncated archive)",
+          reason:
+            "Missing ZIP End of Central Directory record (truncated archive)",
         };
+      }
+      if (!isEmptyArchive) {
+        const view = new DataView(
+          tail.buffer,
+          tail.byteOffset + eocdIdx,
+          22,
+        );
+        const cdSize = view.getUint32(12, true);
+        const cdOffset = view.getUint32(16, true);
+        if (
+          cdSize > 0 &&
+          cdOffset !== 0xffffffff &&
+          cdOffset + 4 <= size
+        ) {
+          const cdHead = await readChunk(cdOffset, 4);
+          if (
+            cdHead.length < 4 ||
+            cdHead[0] !== 0x50 ||
+            cdHead[1] !== 0x4b ||
+            cdHead[2] !== 0x01 ||
+            cdHead[3] !== 0x02
+          ) {
+            return {
+              valid: false,
+              reason: "Corrupt ZIP Central Directory header",
+            };
+          }
+        }
       }
       return { valid: true };
     }
@@ -667,16 +791,14 @@ export async function validateFileStructure(
     if (lower.endsWith(".cbr")) {
       if (size < 20) return { valid: false, reason: "CBR archive too small" };
       const head = await readChunk(0, 7);
-      const isRar =
-        head[0] === 0x52 &&
+      const isRar = head[0] === 0x52 &&
         head[1] === 0x61 &&
         head[2] === 0x72 &&
         head[3] === 0x21 &&
         head[4] === 0x1a &&
         head[5] === 0x07;
       // Publishers on Humble occasionally upload PKZIP archives with a .cbr extension
-      const isPkZip =
-        head[0] === 0x50 &&
+      const isPkZip = head[0] === 0x50 &&
         head[1] === 0x4b &&
         (head[2] === 0x03 || head[2] === 0x05) &&
         (head[3] === 0x04 || head[3] === 0x06);
@@ -733,6 +855,85 @@ export async function validateFileStructure(
       return { valid: true };
     }
 
+    if (lower.endsWith(".flac")) {
+      if (size < 16) return { valid: false, reason: "FLAC file too small" };
+      const head = latin1Decoder.decode(await readChunk(0, 4));
+      if (head !== "fLaC") {
+        return { valid: false, reason: "Missing fLaC magic header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".ogg") || lower.endsWith(".opus")) {
+      if (size < 28) return { valid: false, reason: "Ogg/Opus file too small" };
+      const head = latin1Decoder.decode(await readChunk(0, 4));
+      if (head !== "OggS") {
+        return { valid: false, reason: "Missing OggS magic header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".mp3")) {
+      if (size < 16) return { valid: false, reason: "MP3 file too small" };
+      const head = await readChunk(0, 3);
+      const isId3 = head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33;
+      const isSync = head[0] === 0xff && (head[1] & 0xe0) === 0xe0;
+      if (!isId3 && !isSync) {
+        return { valid: false, reason: "Missing ID3 or MP3 frame sync header" };
+      }
+      return { valid: true };
+    }
+
+    if (
+      lower.endsWith(".mp4") ||
+      lower.endsWith(".m4a") ||
+      lower.endsWith(".m4b") ||
+      lower.endsWith(".m4v")
+    ) {
+      if (size < 16) return { valid: false, reason: "MP4/M4A file too small" };
+      const ident = latin1Decoder.decode(await readChunk(4, 4));
+      if (ident !== "ftyp") {
+        return { valid: false, reason: "Missing ISO BMFF ftyp header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".wav")) {
+      if (size < 16) return { valid: false, reason: "WAV file too small" };
+      const head = await readChunk(0, 12);
+      const riff = latin1Decoder.decode(head.subarray(0, 4));
+      const wave = latin1Decoder.decode(head.subarray(8, 12));
+      if (riff !== "RIFF" || wave !== "WAVE") {
+        return { valid: false, reason: "Missing RIFF/WAVE header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".aiff") || lower.endsWith(".aif")) {
+      if (size < 16) return { valid: false, reason: "AIFF file too small" };
+      const head = await readChunk(0, 12);
+      const form = latin1Decoder.decode(head.subarray(0, 4));
+      const aiff = latin1Decoder.decode(head.subarray(8, 12));
+      if (form !== "FORM" || (aiff !== "AIFF" && aiff !== "AIFC")) {
+        return { valid: false, reason: "Missing FORM/AIFF header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".mkv") || lower.endsWith(".webm")) {
+      if (size < 16) return { valid: false, reason: "MKV/WebM file too small" };
+      const head = await readChunk(0, 4);
+      if (
+        head[0] !== 0x1a ||
+        head[1] !== 0x45 ||
+        head[2] !== 0xdf ||
+        head[3] !== 0xa3
+      ) {
+        return { valid: false, reason: "Missing EBML magic header" };
+      }
+      return { valid: true };
+    }
+
     return { valid: true };
   } finally {
     file.close();
@@ -744,7 +945,10 @@ export async function validateFileStructure(
  * Handles cases where Humble Bundle API swaps sha1 and md5 fields or provides
  * an outdated sha1 while md5 matches (or vice versa).
  */
-export function isHashVerified(download: DownloadInfo, hash: Checksums): boolean {
+export function isHashVerified(
+  download: DownloadInfo,
+  hash: Checksums,
+): boolean {
   const expSha1 = download.sha1?.trim().toLowerCase();
   const expMd5 = download.md5?.trim().toLowerCase();
   const calcSha1 = hash.sha1?.trim().toLowerCase();

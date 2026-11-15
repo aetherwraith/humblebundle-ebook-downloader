@@ -144,25 +144,31 @@ export function resolveFlightRefs(
   val: unknown,
   rows: Map<string, unknown>,
   depth = 0,
+  memo = new Map<string, unknown>(),
 ): unknown {
   if (depth > 16) return val;
   if (typeof val === "string") {
     if (val === "$undefined") return undefined;
     if (val.startsWith("$") && !val.startsWith("$$")) {
       const refId = val.slice(1).replace(/^[L@]/, "");
+      if (memo.has(refId)) return memo.get(refId);
       if (rows.has(refId)) {
-        return resolveFlightRefs(rows.get(refId), rows, depth + 1);
+        const rawRef = rows.get(refId);
+        memo.set(refId, rawRef);
+        const resolved = resolveFlightRefs(rawRef, rows, depth + 1, memo);
+        memo.set(refId, resolved);
+        return resolved;
       }
     }
     return val;
   }
   if (Array.isArray(val)) {
-    return val.map((v) => resolveFlightRefs(v, rows, depth + 1));
+    return val.map((v) => resolveFlightRefs(v, rows, depth + 1, memo));
   }
   if (val && typeof val === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
-      out[k] = resolveFlightRefs(v, rows, depth + 1);
+      out[k] = resolveFlightRefs(v, rows, depth + 1, memo);
     }
     return out;
   }
@@ -240,18 +246,32 @@ export async function fetchWithRetry(
  * @param options Runtime options containing authToken (Netscape cookies.txt, Cookie header, or token)
  * @returns Headers instance
  */
+let lastAuthTokenRaw: string | undefined;
+let lastAuthTokenCookie = "";
+
+function getMemoizedCookieHeader(authToken: string): string {
+  if (authToken !== lastAuthTokenRaw) {
+    lastAuthTokenRaw = authToken;
+    lastAuthTokenCookie = parseCookieInput(authToken);
+  }
+  return lastAuthTokenCookie;
+}
+
 export function getRequestHeaders(options: Options): Headers {
   const headers = new Headers();
   headers.set("Accept", "application/json");
   headers.set("Accept-Charset", "utf-8");
   headers.set("User-Agent", userAgent);
-  headers.set("Cookie", parseCookieInput(options.authToken));
+  headers.set("Cookie", getMemoizedCookieHeader(options.authToken));
   return headers;
 }
 
 function getHtmlHeaders(baseHeaders: Headers): Headers {
   const h = new Headers(baseHeaders);
-  h.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+  h.set(
+    "Accept",
+    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  );
   return h;
 }
 
@@ -262,6 +282,48 @@ function getRscHeaders(baseHeaders: Headers): Headers {
   return h;
 }
 
+let actionIdsLoadPromise: Promise<void> | undefined;
+const inFlightActionIdLookups = new Map<string, Promise<string>>();
+
+async function ensureActionIdsLoaded(options: Options): Promise<void> {
+  if (!options.downloadFolder) return;
+  if (!actionIdsLoadPromise) {
+    actionIdsLoadPromise = (async () => {
+      try {
+        const saved = await readJsonFile(
+          options.downloadFolder,
+          "actionIds.json",
+        );
+        if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+          for (
+            const [k, v] of Object.entries(saved as Record<string, unknown>)
+          ) {
+            if (typeof v === "string" && v && !nextActionIdCache.has(k)) {
+              nextActionIdCache.set(k, v);
+            }
+          }
+        }
+      } catch {
+        // Ignore unreadable or missing actionIds.json
+      }
+    })();
+  }
+  await actionIdsLoadPromise;
+}
+
+async function persistActionIds(options: Options): Promise<void> {
+  if (
+    !options.downloadFolder || options.dryRun || nextActionIdCache.size === 0
+  ) {
+    return;
+  }
+  await writeJsonFile(
+    options.downloadFolder,
+    "actionIds.json",
+    Object.fromEntries(nextActionIdCache.entries()),
+  ).catch(() => {});
+}
+
 /**
  * Dynamically discovers a Next.js Server Action ID (`createServerReference`) from the page's client chunks.
  */
@@ -270,81 +332,102 @@ async function resolveNextActionId(
   pagePath: string,
   options: Options,
 ): Promise<string> {
+  await ensureActionIdsLoaded(options);
   const cached = nextActionIdCache.get(actionName);
   if (cached) return cached;
 
   const routeKey = pagePath.startsWith("/home/library/")
     ? "/home/library/[id]"
     : pagePath;
-  const escapedName = actionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const actionRe = new RegExp(
-    `createServerReference\\)\\("([a-f0-9]+)"[^)]*?"${escapedName}"\\)`,
-  );
+  const lookupKey = `${routeKey}::${actionName}`;
+  const inFlight = inFlightActionIdLookups.get(lookupKey);
+  if (inFlight) return inFlight;
 
-  const scanChunks = async (paths: string[]): Promise<string | undefined> => {
-    const BATCH_SIZE = 6;
-    for (let i = 0; i < paths.length; i += BATCH_SIZE) {
-      const batch = paths.slice(i, i + BATCH_SIZE);
-      const texts = await Promise.all(
-        batch.map((chPath) => {
-          let p = chunkTextCache.get(chPath);
-          if (!p) {
-            p = fetchWithRetry(`${BASE_URL}${chPath}`, {
-              headers: { "User-Agent": userAgent },
-            }).then((r) => (r.ok ? r.text() : "")).catch(() => "");
-            chunkTextCache.set(chPath, p);
+  const lookupPromise = (async () => {
+    const escapedName = actionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const actionRe = new RegExp(
+      `createServerReference\\)\\("([a-f0-9]+)"[^)]*?"${escapedName}"\\)`,
+    );
+
+    const scanChunks = async (
+      paths: string[],
+    ): Promise<string | undefined> => {
+      const BATCH_SIZE = 6;
+      for (let i = 0; i < paths.length; i += BATCH_SIZE) {
+        const batch = paths.slice(i, i + BATCH_SIZE);
+        const texts = await Promise.all(
+          batch.map((chPath) => {
+            let p = chunkTextCache.get(chPath);
+            if (!p) {
+              p = fetchWithRetry(`${BASE_URL}${chPath}`, {
+                headers: { "User-Agent": userAgent },
+              }).then((r) => (r.ok ? r.text() : "")).catch(() => "");
+              chunkTextCache.set(chPath, p);
+            }
+            return p;
+          }),
+        );
+
+        let discoveredNew = false;
+        for (const js of texts) {
+          for (
+            const m of js.matchAll(
+              /createServerReference\)\("([a-f0-9]+)"[^)]*?"([^"]+)"\)/g,
+            )
+          ) {
+            if (nextActionIdCache.get(m[2]) !== m[1]) {
+              nextActionIdCache.set(m[2], m[1]);
+              discoveredNew = true;
+            }
           }
-          return p;
-        }),
-      );
-
-      for (const js of texts) {
-        // Cache any server references encountered in this chunk for instant future lookups
-        for (
-          const m of js.matchAll(
-            /createServerReference\)\("([a-f0-9]+)"[^)]*?"([^"]+)"\)/g,
-          )
-        ) {
-          nextActionIdCache.set(m[2], m[1]);
+          const match = js.match(actionRe);
+          if (match?.[1]) {
+            nextActionIdCache.set(actionName, match[1]);
+            await persistActionIds(options);
+            return match[1];
+          }
         }
-        const match = js.match(actionRe);
-        if (match?.[1]) {
-          nextActionIdCache.set(actionName, match[1]);
-          return match[1];
+        if (discoveredNew) {
+          await persistActionIds(options);
         }
       }
+      return nextActionIdCache.get(actionName);
+    };
+
+    const scanned = new Set<string>();
+    const initialPaths = knownChunkPathsByRoute.get(routeKey) ?? [];
+    if (initialPaths.length > 0) {
+      const found = await scanChunks(initialPaths);
+      if (found) return found;
+      for (const p of initialPaths) scanned.add(p);
     }
-    return nextActionIdCache.get(actionName);
-  };
 
-  const scanned = new Set<string>();
-  const initialPaths = knownChunkPathsByRoute.get(routeKey) ?? [];
-  if (initialPaths.length > 0) {
-    const found = await scanChunks(initialPaths);
-    if (found) return found;
-    for (const p of initialPaths) scanned.add(p);
-  }
+    // Fallback to fetching full HTML once if chunks weren't cached yet or came from a partial RSC Flight payload
+    const pageResp = await fetchWithRetry(`${BASE_URL}${pagePath}`, {
+      headers: getHtmlHeaders(getRequestHeaders(options)),
+    });
+    if (!pageResp.ok) {
+      throw new Error(
+        `Failed to load ${pagePath} to discover ${actionName}: HTTP ${pageResp.status}`,
+      );
+    }
+    const html = await pageResp.text();
+    const allPaths = registerChunkPaths(routeKey, html);
+    const remainingPaths = allPaths.filter((p) => !scanned.has(p));
+    if (remainingPaths.length > 0) {
+      const found = await scanChunks(remainingPaths);
+      if (found) return found;
+    }
 
-  // Fallback to fetching full HTML once if chunks weren't cached yet or came from a partial RSC Flight payload
-  const pageResp = await fetchWithRetry(`${BASE_URL}${pagePath}`, {
-    headers: getHtmlHeaders(getRequestHeaders(options)),
-  });
-  if (!pageResp.ok) {
     throw new Error(
-      `Failed to load ${pagePath} to discover ${actionName}: HTTP ${pageResp.status}`,
+      `Could not locate Next.js Server Action "${actionName}" in ${pagePath} client bundles`,
     );
-  }
-  const html = await pageResp.text();
-  const allPaths = registerChunkPaths(routeKey, html);
-  const remainingPaths = allPaths.filter((p) => !scanned.has(p));
-  if (remainingPaths.length > 0) {
-    const found = await scanChunks(remainingPaths);
-    if (found) return found;
-  }
+  })().finally(() => {
+    inFlightActionIdLookups.delete(lookupKey);
+  });
 
-  throw new Error(
-    `Could not locate Next.js Server Action "${actionName}" in ${pagePath} client bundles`,
-  );
+  inFlightActionIdLookups.set(lookupKey, lookupPromise);
+  return lookupPromise;
 }
 
 /**
@@ -377,6 +460,7 @@ async function invokeNextServerAction<T = unknown>(
       nextActionIdCache.clear();
       chunkTextCache.clear();
       knownChunkPathsByRoute.clear();
+      actionIdsLoadPromise = Promise.resolve();
       continue;
     }
 
@@ -573,7 +657,9 @@ function slugifyMachineName(text: string): string {
     .replace(/^_+|_+$/g, "") || "item";
 }
 
-function inferPublisherFromBundleTitle(bundleTitle: string): string | undefined {
+function inferPublisherFromBundleTitle(
+  bundleTitle: string,
+): string | undefined {
   const byMatch = bundleTitle.match(/\s+by\s+([^()[\]]+)$/i);
   return byMatch?.[1]?.trim() || undefined;
 }
@@ -688,11 +774,10 @@ export function convertLibraryItemToBundle(
   return {
     amount_spent: 0,
     product: {
-      category:
-        item.type === "subscriptioncontent" ||
+      category: item.type === "subscriptioncontent" ||
           item.itemType === "entitlement-group"
-          ? Category.Subscriptioncontent
-          : Category.Bundle,
+        ? Category.Subscriptioncontent
+        : Category.Bundle,
       machine_name: slugifyMachineName(item.title),
       empty_tpkds: unredeemedKeyItems as unknown as { [key: string]: string[] },
       post_purchase_text: "",
@@ -845,64 +930,68 @@ function fetchEntitlementSignedMap(
     }
   }
 
-  const promise = new Promise<CachedSignedMap>((resolvePromise, rejectPromise) => {
-    let batch = pendingEntitlementBatches.get(gameKey);
-    const flushBatch = (b: PendingEntitlementBatch) => {
-      pendingEntitlementBatches.delete(gameKey);
-      const ids = [...b.items.keys()];
-      const pagePath = encodeLibraryKeyPath(b.gameKey);
-      invokeNextServerAction<SignedUrlActionResult>(
-        "getSignedUrlsForEntitlements",
-        pagePath,
-        [ids],
-        b.options,
-      )
-        .then((res) => {
-          if (!res?.ok || !res.data?.signedUrls) {
-            throw new Error(
-              `Unable to sign bundle download URLs (${res?.code ?? "unknown error"})`,
-            );
-          }
-          const expiresAtMs = res.data.expiresAt
-            ? Date.parse(res.data.expiresAt)
-            : Date.now() + 3600_000;
-          const sharedMap: CachedSignedMap = {
-            signedUrls: res.data.signedUrls,
-            expiresAtMs: isNaN(expiresAtMs)
-              ? Date.now() + 3600_000
-              : expiresAtMs,
-          };
-          for (const callbacks of b.items.values()) {
-            for (const cb of callbacks) cb.resolve(sharedMap);
-          }
-        })
-        .catch((err) => {
-          for (const id of ids) entitlementSignedUrlsCache.delete(id);
-          for (const callbacks of b.items.values()) {
-            for (const cb of callbacks) cb.reject(err);
-          }
-        });
-    };
-
-    if (!batch) {
-      batch = {
-        gameKey,
-        options,
-        items: new Map(),
-        timer: setTimeout(() => flushBatch(batch!), 15),
+  const promise = new Promise<CachedSignedMap>(
+    (resolvePromise, rejectPromise) => {
+      let batch = pendingEntitlementBatches.get(gameKey);
+      const flushBatch = (b: PendingEntitlementBatch) => {
+        pendingEntitlementBatches.delete(gameKey);
+        const ids = [...b.items.keys()];
+        const pagePath = encodeLibraryKeyPath(b.gameKey);
+        invokeNextServerAction<SignedUrlActionResult>(
+          "getSignedUrlsForEntitlements",
+          pagePath,
+          [ids],
+          b.options,
+        )
+          .then((res) => {
+            if (!res?.ok || !res.data?.signedUrls) {
+              throw new Error(
+                `Unable to sign bundle download URLs (${
+                  res?.code ?? "unknown error"
+                })`,
+              );
+            }
+            const expiresAtMs = res.data.expiresAt
+              ? Date.parse(res.data.expiresAt)
+              : Date.now() + 3600_000;
+            const sharedMap: CachedSignedMap = {
+              signedUrls: res.data.signedUrls,
+              expiresAtMs: isNaN(expiresAtMs)
+                ? Date.now() + 3600_000
+                : expiresAtMs,
+            };
+            for (const callbacks of b.items.values()) {
+              for (const cb of callbacks) cb.resolve(sharedMap);
+            }
+          })
+          .catch((err) => {
+            for (const id of ids) entitlementSignedUrlsCache.delete(id);
+            for (const callbacks of b.items.values()) {
+              for (const cb of callbacks) cb.reject(err);
+            }
+          });
       };
-      pendingEntitlementBatches.set(gameKey, batch);
-    }
 
-    const list = batch.items.get(entitlementId) ?? [];
-    list.push({ resolve: resolvePromise, reject: rejectPromise });
-    batch.items.set(entitlementId, list);
+      if (!batch) {
+        batch = {
+          gameKey,
+          options,
+          items: new Map(),
+          timer: setTimeout(() => flushBatch(batch!), 15),
+        };
+        pendingEntitlementBatches.set(gameKey, batch);
+      }
 
-    if (batch.items.size >= 25) {
-      clearTimeout(batch.timer);
-      flushBatch(batch);
-    }
-  });
+      const list = batch.items.get(entitlementId) ?? [];
+      list.push({ resolve: resolvePromise, reject: rejectPromise });
+      batch.items.set(entitlementId, list);
+
+      if (batch.items.size >= 25) {
+        clearTimeout(batch.timer);
+        flushBatch(batch);
+      }
+    },
+  );
 
   entitlementSignedUrlsCache.set(entitlementId, promise);
   return promise;
@@ -1109,6 +1198,7 @@ async function fetchFilteredLibraryPage(
       nextActionIdCache.clear();
       chunkTextCache.clear();
       knownChunkPathsByRoute.clear();
+      actionIdsLoadPromise = Promise.resolve();
       continue;
     }
 
@@ -1140,7 +1230,9 @@ async function fetchFilteredLibraryPage(
  * to discover older migrated bundles (`productEntitlementId`) and Choice groups (`entitlement-group`)
  * beyond the ~200-item cap on `/home/library`'s SSR `bundleItems` prop.
  */
-async function fetchAllLibraryItems(options: Options): Promise<RawLibraryItem[]> {
+async function fetchAllLibraryItems(
+  options: Options,
+): Promise<RawLibraryItem[]> {
   const firstPage = await fetchFilteredLibraryPage(1, options);
   if (!firstPage.success || !firstPage.results) {
     return [];
@@ -1349,13 +1441,22 @@ export async function getAllBundles(
   }
   const legacyPool = [...legacyPoolMap.values()];
 
-  const cachedBundles: Bundle[] = options.update
+  function sortBundlesByCreatedDesc(bundles: Bundle[]): Bundle[] {
+    const times = new Map<Bundle, number>();
+    for (const b of bundles) {
+      times.set(b, Date.parse(b.created) || 0);
+    }
+    return bundles.sort((a, b) => (times.get(b) ?? 0) - (times.get(a) ?? 0));
+  }
+
+  const cachedBundles: Bundle[] = options.forceUpdate
     ? []
     : existingDiskBundles.filter((b) => isMigratedPlatformKey(b.gamekey));
 
   const cmd = options.command?.toLowerCase() ?? COMMANDS.ebooks;
   if (
     !options.update &&
+    !options.forceUpdate &&
     existingDiskBundles.length > 0 &&
     (!options.authToken || OFFLINE_CACHEABLE_COMMANDS.has(cmd))
   ) {
@@ -1364,59 +1465,7 @@ export async function getAllBundles(
       progress,
       `Using ${existingDiskBundles.length} cached bundles from bundles.json`,
     );
-    return existingDiskBundles.sort(
-      (a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf(),
-    );
-  }
-
-  let libProps: RawUserLibraryProps;
-  try {
-    libProps = await fetchUserLibraryProps(options);
-  } catch (err) {
-    if (existingDiskBundles.length > 0 && !options.update) {
-      progressDebug(
-        progress,
-        `Network error fetching library (${err instanceof Error ? err.message : String(err)}); falling back to cached bundles.json`,
-      );
-      totals.bundles = existingDiskBundles.length;
-      return existingDiskBundles.sort(
-        (a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf(),
-      );
-    }
-    throw err;
-  }
-
-  // Archive pre-migration legacy bundles to `bundles.legacy.json` before `bundles.json` transitions to UUIDs
-  if (
-    !options.dryRun &&
-    diskMainHadLegacy &&
-    legacyPool.length > existingLegacyArchive.length
-  ) {
-    await writeJsonFile(
-      options.downloadFolder,
-      "bundles.legacy.json",
-      legacyPool,
-    );
-  }
-
-  const rawBundleItems = libProps.bundleItems ?? [];
-  const allLiveBundleIds = new Set<string>();
-  const downloadableBundleIds = new Set<string>();
-  const allLiveTitlesLower = new Set<string>();
-  const liveTitleById = new Map<string, string>();
-
-  for (const b of rawBundleItems) {
-    const id = b.productEntitlementId ?? b.id;
-    if (!id) continue;
-    allLiveBundleIds.add(id);
-    if (b.title) {
-      const lower = b.title.trim().toLowerCase();
-      allLiveTitlesLower.add(lower);
-      liveTitleById.set(id, lower);
-    }
-    if ((b.entitlements?.downloads?.length ?? 0) > 0) {
-      downloadableBundleIds.add(id);
-    }
+    return sortBundlesByCreatedDesc(existingDiskBundles);
   }
 
   const targetBundleKeys = parseBundleKeys(options.bundleKey);
@@ -1431,37 +1480,98 @@ export async function getAllBundles(
   const allTargetsAreExplicitUuids = rawRequestedKeys.length > 0 &&
     rawRequestedKeys.every((k) => isMigratedPlatformKey(k));
 
+  const allLiveBundleIds = new Set<string>();
+  const downloadableBundleIds = new Set<string>();
+  const allLiveTitlesLower = new Set<string>();
+  const liveTitleById = new Map<string, string>();
+
   if (allTargetsAreExplicitUuids) {
     for (const k of rawRequestedKeys) {
       allLiveBundleIds.add(k);
       downloadableBundleIds.add(k);
     }
   } else {
-    progressDebug(
-      progress,
-      "Scanning full Humble library via filterUserLibrary...",
-    );
-    const allItems = await fetchAllLibraryItems(options);
-    for (const item of allItems) {
-      const id = item.itemType === "entitlement-group"
-        ? `group/${item.id}`
-        : item.productEntitlementId;
-      if (!id) continue;
-      allLiveBundleIds.add(id);
-      const bundleTitle = item.subTitle || item.title;
-      if (bundleTitle) {
-        const lower = bundleTitle.trim().toLowerCase();
-        allLiveTitlesLower.add(lower);
-        liveTitleById.set(id, lower);
+    let allItems: RawLibraryItem[] = [];
+    try {
+      progressDebug(
+        progress,
+        "Scanning full Humble library via filterUserLibrary...",
+      );
+      allItems = await fetchAllLibraryItems(options);
+    } catch {
+      allItems = [];
+    }
+
+    if (allItems.length > 0) {
+      for (const item of allItems) {
+        const id = item.itemType === "entitlement-group"
+          ? `group/${item.id}`
+          : item.productEntitlementId;
+        if (!id) continue;
+        allLiveBundleIds.add(id);
+        const bundleTitle = item.subTitle || item.title;
+        if (bundleTitle) {
+          const lower = bundleTitle.trim().toLowerCase();
+          allLiveTitlesLower.add(lower);
+          liveTitleById.set(id, lower);
+        }
+        if (
+          item.type === "download_drm_free" ||
+          item.deliveryMethods?.includes("download") ||
+          (item.entitlements?.downloads?.length ?? 0) > 0
+        ) {
+          downloadableBundleIds.add(id);
+        }
       }
-      if (
-        item.type === "download_drm_free" ||
-        item.deliveryMethods?.includes("download") ||
-        (item.entitlements?.downloads?.length ?? 0) > 0
-      ) {
-        downloadableBundleIds.add(id);
+    } else {
+      // Fallback to /home/library RSC payload if filterUserLibrary returned nothing
+      let libProps: RawUserLibraryProps;
+      try {
+        libProps = await fetchUserLibraryProps(options);
+      } catch (err) {
+        if (existingDiskBundles.length > 0 && !options.update) {
+          progressDebug(
+            progress,
+            `Network error fetching library (${
+              err instanceof Error ? err.message : String(err)
+            }); falling back to cached bundles.json`,
+          );
+          totals.bundles = existingDiskBundles.length;
+          return existingDiskBundles.sort(
+            (a, b) =>
+              new Date(b.created).valueOf() - new Date(a.created).valueOf(),
+          );
+        }
+        throw err;
+      }
+
+      for (const b of libProps.bundleItems ?? []) {
+        const id = b.productEntitlementId ?? b.id;
+        if (!id) continue;
+        allLiveBundleIds.add(id);
+        if (b.title) {
+          const lower = b.title.trim().toLowerCase();
+          allLiveTitlesLower.add(lower);
+          liveTitleById.set(id, lower);
+        }
+        if ((b.entitlements?.downloads?.length ?? 0) > 0) {
+          downloadableBundleIds.add(id);
+        }
       }
     }
+  }
+
+  // Archive pre-migration legacy bundles to `bundles.legacy.json` before `bundles.json` transitions to UUIDs
+  if (
+    !options.dryRun &&
+    diskMainHadLegacy &&
+    legacyPool.length > existingLegacyArchive.length
+  ) {
+    await writeJsonFile(
+      options.downloadFolder,
+      "bundles.legacy.json",
+      legacyPool,
+    );
   }
 
   const needsKeyOnlyBundles = cmd === COMMANDS.bundles ||
@@ -1495,6 +1605,7 @@ export async function getAllBundles(
       },
     );
     let newlyFetchedSinceCheckpoint = 0;
+    let bundlesFlushInFlight = false;
 
     for (const bundleId of idsToFetch) {
       queues.orderInfo.add(async () => {
@@ -1509,15 +1620,21 @@ export async function getAllBundles(
           if (
             !options.dryRun &&
             !targetBundleKeys &&
-            newlyFetchedSinceCheckpoint >= 40
+            newlyFetchedSinceCheckpoint >= 40 &&
+            !bundlesFlushInFlight
           ) {
             newlyFetchedSinceCheckpoint = 0;
+            bundlesFlushInFlight = true;
             const snapshot = [...liveBundles, ...legacyPool];
-            await writeJsonFile(
+            writeJsonFile(
               options.downloadFolder,
               "bundles.json",
               snapshot,
-            ).catch(() => {});
+            )
+              .catch(() => {})
+              .finally(() => {
+                bundlesFlushInFlight = false;
+              });
           }
         } catch (err) {
           const failedTitle = liveTitleById.get(bundleId);
@@ -1526,7 +1643,11 @@ export async function getAllBundles(
             allLiveTitlesLower.delete(failedTitle);
           }
           progress.log(
-            `Warning: Skipping bundle ${bundleId}${failedTitle ? ` ("${failedTitle}")` : ""} after retries: ${err instanceof Error ? err.message : String(err)}`,
+            `Warning: Skipping bundle ${bundleId}${
+              failedTitle ? ` ("${failedTitle}")` : ""
+            } after retries: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           );
         } finally {
           progressBar.increment();
@@ -1588,9 +1709,7 @@ export async function getAllBundles(
     }
   }
 
-  return combinedBundles.sort(
-    (a, b) => new Date(b.created).valueOf() - new Date(a.created).valueOf(),
-  );
+  return sortBundlesByCreatedDesc(combinedBundles);
 }
 
 /**
@@ -1618,7 +1737,10 @@ export function convertVaultItemsToTroves(
 
         const tsIso = st.uploadedAt ?? dl.updatedAt ?? dl.createdAt;
         const tsSec = tsIso ? Math.floor(Date.parse(tsIso) / 1000) : 0;
-        if (!isNaN(tsSec) && tsSec > 0 && (dateAddedSec === 0 || tsSec < dateAddedSec)) {
+        if (
+          !isNaN(tsSec) && tsSec > 0 &&
+          (dateAddedSec === 0 || tsSec < dateAddedSec)
+        ) {
           dateAddedSec = tsSec;
         }
 
@@ -1713,6 +1835,107 @@ export async function getAllTroves(options: Options): Promise<Trove[]> {
  * @param forceRefresh Bypass cached signed URLs
  * @returns URL object pointing to signed CDN download
  */
+const pendingVaultBatches: {
+  options: Options;
+  items: Map<
+    string,
+    {
+      resolve: (val: CachedSignedMap) => void;
+      reject: (err: unknown) => void;
+    }[]
+  >;
+  timer: ReturnType<typeof setTimeout>;
+}[] = [];
+
+function fetchVaultSignedMapBatched(
+  subProductId: string,
+  options: Options,
+  forceRefresh = false,
+): Promise<CachedSignedMap> {
+  if (forceRefresh) {
+    vaultSignedUrlsCache.delete(subProductId);
+  } else {
+    const existing = vaultSignedUrlsCache.get(subProductId);
+    if (existing) {
+      return existing.then((cached) => {
+        if (cached.expiresAtMs > Date.now() + 5 * 60_000) {
+          return cached;
+        }
+        vaultSignedUrlsCache.delete(subProductId);
+        return fetchVaultSignedMapBatched(subProductId, options, true);
+      });
+    }
+  }
+
+  const promise = new Promise<CachedSignedMap>(
+    (resolvePromise, rejectPromise) => {
+      let batch = pendingVaultBatches.find((b) => b.items.size < 25);
+      const flushBatch = (b: (typeof pendingVaultBatches)[number]) => {
+        const idx = pendingVaultBatches.indexOf(b);
+        if (idx !== -1) pendingVaultBatches.splice(idx, 1);
+        const ids = [...b.items.keys()];
+        invokeNextServerAction<SignedUrlActionResult>(
+          "getVaultSignedUrls",
+          LIBRARY_PATH,
+          [ids],
+          b.options,
+        )
+          .then((res) => {
+            if (!res?.ok || !res.data?.signedUrls) {
+              throw new Error(
+                res?.code === "denied"
+                  ? `Humble Vault access denied (${res.code})`
+                  : `Failed to sign Vault URL (${
+                    res?.code ?? "unknown error"
+                  })`,
+              );
+            }
+            const expiresAtMs = res.data.expiresAt
+              ? Date.parse(res.data.expiresAt)
+              : Date.now() + 3600_000;
+            const sharedMap: CachedSignedMap = {
+              signedUrls: res.data.signedUrls,
+              expiresAtMs: isNaN(expiresAtMs)
+                ? Date.now() + 3600_000
+                : expiresAtMs,
+            };
+            for (const callbacks of b.items.values()) {
+              for (const cb of callbacks) cb.resolve(sharedMap);
+            }
+          })
+          .catch((err) => {
+            for (const id of ids) vaultSignedUrlsCache.delete(id);
+            for (const callbacks of b.items.values()) {
+              for (const cb of callbacks) cb.reject(err);
+            }
+          });
+      };
+
+      if (!batch) {
+        const newBatch: (typeof pendingVaultBatches)[number] = {
+          options,
+          items: new Map(),
+          timer: setTimeout(() => flushBatch(newBatch), 15),
+        };
+        pendingVaultBatches.push(newBatch);
+        batch = newBatch;
+      }
+
+      const list = batch.items.get(subProductId) ?? [];
+      list.push({ resolve: resolvePromise, reject: rejectPromise });
+      batch.items.set(subProductId, list);
+
+      if (batch.items.size >= 25) {
+        clearTimeout(batch.timer);
+        flushBatch(batch);
+      }
+    },
+  );
+
+  vaultSignedUrlsCache.set(subProductId, promise);
+  return promise;
+}
+
 export async function getTroveURL(
   machine_name: string,
   web: string,
@@ -1726,49 +1949,11 @@ export async function getTroveURL(
       "",
     );
 
-  if (forceRefresh) {
-    vaultSignedUrlsCache.delete(resolvedSubProductId);
-  }
-
-  let mapPromise = vaultSignedUrlsCache.get(resolvedSubProductId);
-  if (mapPromise) {
-    const cached = await mapPromise;
-    if (cached.expiresAtMs <= Date.now() + 5 * 60_000) {
-      vaultSignedUrlsCache.delete(resolvedSubProductId);
-      mapPromise = undefined;
-    }
-  }
-
-  if (!mapPromise) {
-    mapPromise = (async () => {
-      const res = await invokeNextServerAction<SignedUrlActionResult>(
-        "getVaultSignedUrls",
-        LIBRARY_PATH,
-        [[resolvedSubProductId]],
-        options,
-      );
-      if (!res?.ok || !res.data?.signedUrls) {
-        throw new Error(
-          res?.code === "denied"
-            ? `Humble Vault access denied for ${resolvedSubProductId} (active Humble Choice membership required or title retired from Vault)`
-            : `Failed to sign Vault URL for ${resolvedSubProductId} (${res?.code ?? "unknown error"})`,
-        );
-      }
-      const expiresAtMs = res.data.expiresAt
-        ? Date.parse(res.data.expiresAt)
-        : Date.now() + 3600_000;
-      return {
-        signedUrls: res.data.signedUrls,
-        expiresAtMs: isNaN(expiresAtMs) ? Date.now() + 3600_000 : expiresAtMs,
-      };
-    })().catch((err) => {
-      vaultSignedUrlsCache.delete(resolvedSubProductId);
-      throw err;
-    });
-    vaultSignedUrlsCache.set(resolvedSubProductId, mapPromise);
-  }
-
-  const cachedMap = await mapPromise;
+  const cachedMap = await fetchVaultSignedMapBatched(
+    resolvedSubProductId,
+    options,
+    forceRefresh,
+  );
   const signed = lookupSignedUrlInMap(
     cachedMap.signedUrls,
     resolvedSubProductId,
@@ -1824,7 +2009,9 @@ export async function sendCompletionWebhook(
   } catch (err) {
     progressDebug(
       progress,
-      `Webhook delivery failed: ${err instanceof Error ? err.message : String(err)}`,
+      `Webhook delivery failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
     );
     return false;
   }

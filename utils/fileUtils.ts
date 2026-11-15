@@ -1,7 +1,7 @@
 import { cyan, green, red, yellow } from "@std/fmt/colors";
 import { format } from "@std/fmt/bytes";
 import { walk } from "@std/fs/walk";
-import { basename, extname, resolve } from "@std/path";
+import { basename, dirname, extname, relative, resolve } from "@std/path";
 import { getChecksumCacheKey } from "./checksums.ts";
 import { cacheFileName, logFileName } from "./constants.ts";
 import {
@@ -137,6 +137,21 @@ export async function readJsonFile<T = Record<string, unknown>>(
  * @param file Output file name
  * @param contents Object or array to serialize
  */
+const COMPACT_JSON_FILES = new Set([
+  "bundles.json",
+  "bundles.legacy.json",
+  "checksums.json",
+  "filteredbundles.json",
+  "troves.json",
+  "troves.archive.json",
+]);
+
+function serializeJsonForFile(file: string, contents: unknown): string {
+  return COMPACT_JSON_FILES.has(file.toLowerCase())
+    ? JSON.stringify(contents)
+    : JSON.stringify(contents, null, 2);
+}
+
 export async function writeJsonFile(
   folder: string,
   file: string,
@@ -145,7 +160,7 @@ export async function writeJsonFile(
   const filePath = resolve(folder, sanitizeFilename(file));
   const tmpPath = `${filePath}.${crypto.randomUUID().slice(0, 8)}.tmp`;
   await ensureDirCached(folder);
-  await Deno.writeTextFile(tmpPath, JSON.stringify(contents, null, 2));
+  await Deno.writeTextFile(tmpPath, serializeJsonForFile(file, contents));
   await Deno.rename(tmpPath, filePath);
   if (contents && typeof contents === "object") {
     markChecksumCacheClean(contents as Record<string, Checksums>);
@@ -167,7 +182,7 @@ export function writeJsonFileSync(
   const filePath = resolve(folder, sanitizeFilename(file));
   const tmpPath = `${filePath}.${Deno.pid}.tmp`;
   Deno.mkdirSync(folder, { recursive: true });
-  Deno.writeTextFileSync(tmpPath, JSON.stringify(contents, null, 2));
+  Deno.writeTextFileSync(tmpPath, serializeJsonForFile(file, contents));
   Deno.renameSync(tmpPath, filePath);
   if (contents && typeof contents === "object") {
     markChecksumCacheClean(contents as Record<string, Checksums>);
@@ -192,7 +207,9 @@ export async function loadChecksumCache(
   );
   const checksumCache = wrapChecksumCache(rawCache);
 
-  const msg = `${green(Object.keys(rawCache).length.toString())} checksums loaded`;
+  const msg = `${
+    green(Object.keys(rawCache).length.toString())
+  } checksums loaded`;
   if (progress) {
     progress.log(msg);
   } else {
@@ -207,14 +224,82 @@ export async function loadChecksumCache(
  * @param options Runtime options containing downloadFolder
  * @param includePartFiles Whether to include temporary .part files (true for clean(), false for checksums)
  */
+const TRASH_DIR_RE = /(?:^|[\\/])\.trash(?:[\\/]|$)/i;
+
 export function walkExistingFiles(options: Options, includePartFiles = false) {
   return walk(options.downloadFolder, {
     includeDirs: false,
     includeSymlinks: false,
     skip: includePartFiles
-      ? [/\.json$/i, /\.log$/i, /\.tmp$/i]
-      : [/\.json$/i, /\.log$/i, /\.part$/i, /\.tmp$/i],
+      ? [/\.json$/i, /\.log$/i, /\.tmp$/i, TRASH_DIR_RE]
+      : [/\.json$/i, /\.log$/i, /\.part$/i, /\.tmp$/i, TRASH_DIR_RE],
   });
+}
+
+function buildAllowedCleanPaths(
+  filteredBundles: DownloadInfo[],
+  options: Options,
+  activePartFiles?: ReadonlySet<string>,
+): { allowedPaths: Set<string>; extractedPrefixes: string[] } {
+  const allowedPaths = new Set<string>();
+  const extractedPrefixes: string[] = [];
+  allowedPaths.add(resolve(options.downloadFolder, logFileName).toLowerCase());
+  if (options.logFile) {
+    allowedPaths.add(resolve(options.logFile).toLowerCase());
+  }
+  if (activePartFiles) {
+    for (const part of activePartFiles) {
+      allowedPaths.add(resolve(part).toLowerCase());
+    }
+  }
+  const COVER_SIDECAR_EXTS = [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".avif",
+  ];
+  for (const d of filteredBundles) {
+    allowedPaths.add(resolve(d.filePath).toLowerCase());
+    // Protect existing .opf/.nfo metadata and cover art sidecars alongside valid library items
+    // (including when Humble's migrated API omits `icon` or when sidecar flags aren't re-passed)
+    allowedPaths.add(
+      resolve(replaceFileExtension(d.filePath, ".opf")).toLowerCase(),
+    );
+    allowedPaths.add(
+      resolve(replaceFileExtension(d.filePath, ".nfo")).toLowerCase(),
+    );
+    for (const ext of COVER_SIDECAR_EXTS) {
+      allowedPaths.add(
+        resolve(replaceFileExtension(d.filePath, ext)).toLowerCase(),
+      );
+    }
+    if (options.playlists && isAudioFile(d.fileName)) {
+      allowedPaths.add(
+        getPlaylistPathForFolder(d.downloadPath).toLowerCase(),
+      );
+    }
+    if (options.extract && isExtractableArchive(d.filePath)) {
+      const dirLower = getExtractedDirPath(d.filePath).toLowerCase();
+      extractedPrefixes.push(`${dirLower.replace(/\\/g, "/")}/`);
+      if (dirLower.includes("\\")) {
+        extractedPrefixes.push(`${dirLower}\\`);
+      }
+    }
+  }
+  return { allowedPaths, extractedPrefixes };
+}
+
+function isPathAllowedForClean(
+  filePath: string,
+  allowedPaths: ReadonlySet<string>,
+  extractedPrefixes: readonly string[],
+): boolean {
+  const lowerPath = resolve(filePath).toLowerCase();
+  if (allowedPaths.has(lowerPath)) return true;
+  if (lowerPath.endsWith(".url")) return true;
+  return extractedPrefixes.some((p) => lowerPath.startsWith(p));
 }
 
 /**
@@ -261,68 +346,57 @@ export async function clean(
   debugLog("Removing extra files...");
 
   // Create a Set of allowed file paths for O(1) lookup
-  const allowedPaths = new Set<string>();
-  const extractedPrefixes: string[] = [];
-  allowedPaths.add(resolve(options.downloadFolder, logFileName).toLowerCase());
-  if (options.logFile) {
-    allowedPaths.add(resolve(options.logFile).toLowerCase());
-  }
-  if (activePartFiles) {
-    for (const part of activePartFiles) {
-      allowedPaths.add(resolve(part).toLowerCase());
-    }
-  }
-  const COVER_SIDECAR_EXTS = [
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".gif",
-    ".avif",
-  ];
-  for (const d of filteredBundles) {
-    allowedPaths.add(resolve(d.filePath).toLowerCase());
-    // Protect existing .opf metadata and cover art sidecars alongside valid library items
-    // (including when Humble's migrated API omits `icon` or when sidecar flags aren't re-passed)
-    allowedPaths.add(
-      resolve(replaceFileExtension(d.filePath, ".opf")).toLowerCase(),
-    );
-    const coverPath = getCoverSidecarPath(d);
-    if (coverPath) {
-      allowedPaths.add(resolve(coverPath).toLowerCase());
-    }
-    for (const ext of COVER_SIDECAR_EXTS) {
-      allowedPaths.add(
-        resolve(replaceFileExtension(d.filePath, ext)).toLowerCase(),
-      );
-    }
-    if (options.playlists && isAudioFile(d.fileName)) {
-      allowedPaths.add(
-        getPlaylistPathForFolder(d.downloadPath).toLowerCase(),
-      );
-    }
-    if (options.extract && isExtractableArchive(d.filePath)) {
-      extractedPrefixes.push(
-        `${getExtractedDirPath(d.filePath).toLowerCase()}/`,
-      );
+  const { allowedPaths, extractedPrefixes } = buildAllowedCleanPaths(
+    filteredBundles,
+    options,
+    activePartFiles,
+  );
+  const rootFolder = resolve(options.downloadFolder);
+  const trashRoot = resolve(rootFolder, ".trash");
+
+  const extraFiles: string[] = [];
+  for await (const file of walkExistingFiles(options, true)) {
+    if (!isPathAllowedForClean(file.path, allowedPaths, extractedPrefixes)) {
+      extraFiles.push(file.path);
     }
   }
 
-  for await (const file of walkExistingFiles(options, true)) {
-    const lowerPath = resolve(file.path).toLowerCase();
-    const isInsideExtracted = extractedPrefixes.some((p) =>
-      lowerPath.startsWith(p.replace(/\\/g, "/")) || lowerPath.startsWith(p)
+  const CLEAN_BATCH_SIZE = 16;
+  for (let i = 0; i < extraFiles.length; i += CLEAN_BATCH_SIZE) {
+    const batch = extraFiles.slice(i, i + CLEAN_BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (filePath) => {
+        if (options.dryRun) {
+          infoLog(
+            options.backupReplaced
+              ? `[Dry Run] Would move extra file to .trash: ${filePath}`
+              : `[Dry Run] Would delete extra file: ${filePath}`,
+          );
+          totals.removedFiles += 1;
+        } else if (options.backupReplaced) {
+          debugLog(`Backing up extra file to .trash: ${filePath}`);
+          totals.removedFiles += 1;
+          const rel = relative(rootFolder, resolve(filePath));
+          const trashTarget = resolve(trashRoot, rel);
+          try {
+            await ensureDirCached(dirname(trashTarget));
+            await Deno.rename(filePath, trashTarget);
+          } catch {
+            // Fallback to copy + remove across filesystems
+            try {
+              await Deno.copyFile(filePath, trashTarget);
+              await Deno.remove(filePath);
+            } catch {
+              // Ignore errors backing up file
+            }
+          }
+        } else {
+          debugLog(`Deleting extra file: ${filePath}`);
+          totals.removedFiles += 1;
+          await Deno.remove(filePath).catch(() => {});
+        }
+      }),
     );
-    if (!allowedPaths.has(lowerPath) && !isInsideExtracted) {
-      if (options.dryRun) {
-        infoLog(`[Dry Run] Would delete extra file: ${file.path}`);
-        totals.removedFiles += 1;
-      } else {
-        debugLog(`Deleting extra file: ${file.path}`);
-        totals.removedFiles += 1;
-        await Deno.remove(file.path).catch(() => {});
-      }
-    }
   }
 
   debugLog("Removing stale checksums from cache...");
@@ -365,7 +439,7 @@ export async function deleteEmptyFolders(
   try {
     const subDirs: string[] = [];
     for await (const entry of Deno.readDir(folder)) {
-      if (entry.isDirectory) {
+      if (entry.isDirectory && entry.name.toLowerCase() !== ".trash") {
         subDirs.push(resolve(folder, entry.name));
       }
     }
@@ -395,7 +469,9 @@ function escapeXml(str: string): string {
 /**
  * Resolves the local file path where a download's cover image sidecar should be saved.
  */
-export function getCoverSidecarPath(download: DownloadInfo): string | undefined {
+export function getCoverSidecarPath(
+  download: DownloadInfo,
+): string | undefined {
   if (!download.icon) return undefined;
   let ext = ".jpg";
   try {
@@ -520,12 +596,21 @@ export async function extractArchive(
 }
 
 const AUDIO_EXT_RE = /\.(mp3|flac|ogg|wav|m4a|aac|opus)$/i;
+const VIDEO_EXT_RE = /\.(mp4|mkv|webm|mov|avi|m4v)$/i;
+const AUDIO_STRUCT_RE = /\b(flac|alac|wav|aiff|ogg|opus|aac|mp3|audio)\b/i;
 
 /**
  * Checks if a filename has a supported audio extension.
  */
 export function isAudioFile(fileName: string): boolean {
   return AUDIO_EXT_RE.test(fileName);
+}
+
+/**
+ * Checks if a filename has a supported video extension.
+ */
+export function isVideoFile(fileName: string): boolean {
+  return VIDEO_EXT_RE.test(fileName);
 }
 
 /**
@@ -577,6 +662,39 @@ export async function generateAudioPlaylists(
   return createdPlaylists;
 }
 
+async function fileExistsAndNonEmpty(filePath: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(filePath);
+    return stat.isFile && stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+const SERIES_INDEX_RE =
+  /\b(?:vol(?:ume)?|book|part|issue|#)\s*\.?\s*(\d+(?:\.\d+)?)\b/i;
+
+function buildSidecarMetadata(download: DownloadInfo) {
+  const isoDate = isNaN(download.date.getTime())
+    ? "1970-01-01"
+    : download.date.toISOString().split("T")[0];
+  const coverPath = getCoverSidecarPath(download);
+  const seriesMatch = download.name.match(SERIES_INDEX_RE);
+  return {
+    title: escapeXml(download.name),
+    creator: escapeXml(download.publisher ?? "Humble Bundle"),
+    series: escapeXml(download.bundle),
+    dateStr: isoDate,
+    year: escapeXml(isoDate.slice(0, 4)),
+    identifier: escapeXml(`${download.gameKey}:${download.machineName}`),
+    format: escapeXml(
+      download.structName || extname(download.fileName).replace(/^\./, ""),
+    ),
+    seriesIndex: seriesMatch?.[1],
+    coverFileName: coverPath ? escapeXml(basename(coverPath)) : undefined,
+  };
+}
+
 /**
  * Generates a Calibre/Komga/Kavita compatible OPF XML sidecar file alongside an ebook.
  * Skips writing if `overwrite` is false and the `.opf` file already exists on disk.
@@ -586,39 +704,175 @@ export async function writeOpfSidecar(
   overwrite = true,
 ): Promise<void> {
   const opfPath = resolve(replaceFileExtension(download.filePath, ".opf"));
-  if (!overwrite) {
-    try {
-      const stat = await Deno.stat(opfPath);
-      if (stat.isFile && stat.size > 0) return;
-    } catch {
-      // File doesn't exist yet, proceed to write
-    }
-  }
+  if (!overwrite && (await fileExistsAndNonEmpty(opfPath))) return;
 
-  const title = escapeXml(download.name);
-  const creator = escapeXml(download.publisher ?? "Humble Bundle");
-  const series = escapeXml(download.bundle);
-  const dateStr = download.date.toISOString().split("T")[0];
-  const identifier = escapeXml(`${download.gameKey}:${download.machineName}`);
-  const coverPath = getCoverSidecarPath(download);
-  const coverTag = coverPath
-    ? `\n    <meta name="cover" content="${escapeXml(basename(coverPath))}"/>`
+  const meta = buildSidecarMetadata(download);
+  const coverTag = meta.coverFileName
+    ? `\n    <meta name="cover" content="${meta.coverFileName}"/>`
+    : "";
+  const seriesIndexTag = meta.seriesIndex
+    ? `\n    <meta name="calibre:series_index" content="${meta.seriesIndex}"/>`
     : "";
 
   const opfXml = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="hb_id" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-    <dc:title>${title}</dc:title>
-    <dc:creator opf:role="aut">${creator}</dc:creator>
-    <dc:publisher>${creator}</dc:publisher>
-    <dc:date>${dateStr}</dc:date>
-    <dc:identifier id="hb_id">${identifier}</dc:identifier>
-    <meta name="calibre:series" content="${series}"/>${coverTag}
+    <dc:title>${meta.title}</dc:title>
+    <dc:creator opf:role="aut">${meta.creator}</dc:creator>
+    <dc:publisher>${meta.creator}</dc:publisher>
+    <dc:date>${meta.dateStr}</dc:date>
+    <dc:format>${meta.format}</dc:format>
+    <dc:identifier id="hb_id">${meta.identifier}</dc:identifier>
+    <meta name="calibre:series" content="${meta.series}"/>${seriesIndexTag}${coverTag}
   </metadata>
 </package>
 `;
   await ensureDirCached(download.downloadPath);
   await Deno.writeTextFile(opfPath, opfXml);
+}
+
+/**
+ * Generates a Kodi/Jellyfin/Plex-compatible `.nfo` XML sidecar alongside an audio or video item.
+ * Emits `<album>` metadata for audio items and `<movie>` metadata for video items.
+ */
+export async function writeNfoSidecar(
+  download: DownloadInfo,
+  overwrite = true,
+): Promise<void> {
+  const isAudio = isAudioFile(download.fileName) ||
+    (!isVideoFile(download.fileName) &&
+      AUDIO_STRUCT_RE.test(download.structName));
+  const isVideo = isVideoFile(download.fileName);
+  if (!isAudio && !isVideo) return;
+
+  const nfoPath = resolve(replaceFileExtension(download.filePath, ".nfo"));
+  if (!overwrite && (await fileExistsAndNonEmpty(nfoPath))) return;
+
+  const meta = buildSidecarMetadata(download);
+  const thumbTag = meta.coverFileName
+    ? `\n  <thumb>${meta.coverFileName}</thumb>`
+    : "";
+
+  const nfoXml = isAudio
+    ? `<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<album>
+  <title>${meta.title}</title>
+  <artist>${meta.creator}</artist>
+  <label>${meta.creator}</label>
+  <releasedate>${meta.dateStr}</releasedate>
+  <year>${meta.year}</year>
+  <uniqueid type="humble">${meta.identifier}</uniqueid>${thumbTag}
+</album>
+`
+    : `<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <title>${meta.title}</title>
+  <set>
+    <name>${meta.series}</name>
+  </set>
+  <studio>${meta.creator}</studio>
+  <premiered>${meta.dateStr}</premiered>
+  <year>${meta.year}</year>
+  <uniqueid type="humble">${meta.identifier}</uniqueid>${thumbTag}
+</movie>
+`;
+
+  await ensureDirCached(download.downloadPath);
+  await Deno.writeTextFile(nfoPath, nfoXml);
+}
+
+/**
+ * Prunes files from `<downloadFolder>/.trash/` (all files if `maxAgeDays` is omitted,
+ * or files older than `maxAgeDays` days) and removes empty subdirectories inside `.trash/`.
+ */
+export async function pruneTrash(
+  downloadFolder: string,
+  maxAgeDays?: number,
+  dryRun = false,
+  progress?: MultiBarWrapper,
+): Promise<number> {
+  const trashRoot = resolve(downloadFolder, ".trash");
+  try {
+    const st = await Deno.stat(trashRoot);
+    if (!st.isDirectory) return 0;
+  } catch {
+    return 0;
+  }
+
+  const cutoffMs = maxAgeDays !== undefined && maxAgeDays >= 0
+    ? Date.now() - maxAgeDays * 86_400_000
+    : undefined;
+  let removed = 0;
+
+  for await (
+    const entry of walk(trashRoot, {
+      includeDirs: false,
+      includeSymlinks: false,
+    })
+  ) {
+    let shouldDelete = cutoffMs === undefined;
+    if (!shouldDelete && cutoffMs !== undefined) {
+      try {
+        const st = await Deno.stat(entry.path);
+        const mtimeMs = st.mtime?.getTime() ?? 0;
+        shouldDelete = mtimeMs <= cutoffMs;
+      } catch {
+        shouldDelete = false;
+      }
+    }
+    if (shouldDelete) {
+      removed++;
+      if (dryRun) {
+        progress?.log(
+          `[Dry Run] Would permanently delete from .trash: ${entry.path}`,
+        );
+      } else {
+        await Deno.remove(entry.path).catch(() => {});
+      }
+    }
+  }
+
+  if (!dryRun) {
+    await deleteEmptyFolders(trashRoot, false);
+  }
+  return removed;
+}
+
+/**
+ * Writes `.url` Internet Shortcut sidecars for external-link-only items in `bundles`.
+ */
+export async function writeExternalLinkSidecars(
+  bundles: Bundle[],
+  options: Options,
+  progress?: MultiBarWrapper,
+): Promise<number> {
+  const report = buildUnclaimedReport(bundles, options);
+  let written = 0;
+  for (const ext of report.externalLinks) {
+    const folder = options.bundleFolders
+      ? resolve(options.downloadFolder, sanitizeFilename(ext.bundle))
+      : resolve(options.downloadFolder, "External Links");
+    const safeName = sanitizeFilename(`${ext.product} (${ext.label})`) ||
+      sanitizeFilename(ext.product) ||
+      "external_link";
+    const urlPath = resolve(folder, `${safeName}.url`);
+    if (options.dryRun) {
+      progress?.log(`[Dry Run] Would write external link: ${urlPath}`);
+      written++;
+      continue;
+    }
+    try {
+      await ensureDirCached(folder);
+      await Deno.writeTextFile(
+        urlPath,
+        `[InternetShortcut]\nURL=${ext.url}\n`,
+      );
+      written++;
+    } catch {
+      // Ignore write failures
+    }
+  }
+  return written;
 }
 
 /**
@@ -643,8 +897,6 @@ export async function exportCatalog(
     productUrl: d.productUrl ?? "",
     icon: d.icon ?? "",
   }));
-
-  await writeJsonFile(downloadFolder, "catalog.json", catalogItems);
 
   const csvQuote = (val: string | number) =>
     `"${String(val).replace(/"/g, '""')}"`;
@@ -683,10 +935,37 @@ export async function exportCatalog(
   ];
 
   await ensureDirCached(downloadFolder);
-  await Deno.writeTextFile(
-    resolve(downloadFolder, "catalog.csv"),
-    rows.join("\n"),
-  );
+  const csvPath = resolve(downloadFolder, "catalog.csv");
+  const tmpCsvPath = `${csvPath}.${crypto.randomUUID().slice(0, 8)}.tmp`;
+  await Promise.all([
+    writeJsonFile(downloadFolder, "catalog.json", catalogItems),
+    Deno.writeTextFile(tmpCsvPath, rows.join("\n")).then(() =>
+      Deno.rename(tmpCsvPath, csvPath)
+    ),
+  ]);
+}
+
+async function statFilesInBatches<T>(
+  items: readonly T[],
+  getPath: (item: T) => string,
+  batchSize = 32,
+): Promise<(T | null)[]> {
+  const results: (T | null)[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchRes = await Promise.all(
+      batch.map(async (item) => {
+        try {
+          const st = await Deno.stat(getPath(item));
+          return st.isFile ? item : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    results.push(...batchRes);
+  }
+  return results;
 }
 
 /**
@@ -741,24 +1020,11 @@ export async function printLibraryStats(
   }
 
   // Check uncached items on disk concurrently in batches of 32
-  const BATCH_SIZE = 32;
-  for (let i = 0; i < uncachedItems.length; i += BATCH_SIZE) {
-    const batch = uncachedItems.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(async (item) => {
-        try {
-          const st = await Deno.stat(item.filePath);
-          return st.isFile ? (item.file_size ?? 0) : null;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    for (const size of results) {
-      if (size !== null) {
-        downloadedCount++;
-        downloadedBytes += size;
-      }
+  const foundItems = await statFilesInBatches(uncachedItems, (i) => i.filePath);
+  for (const item of foundItems) {
+    if (item) {
+      downloadedCount++;
+      downloadedBytes += item.file_size ?? 0;
     }
   }
 
@@ -793,20 +1059,28 @@ export async function printLibraryStats(
   console.log(`\n${cyan("=== Humble Bundle Library Statistics ===")}`);
   console.log(`Total Bundles:      ${yellow(totalBundlesCount.toString())}`);
   console.log(
-    `Matched Items:      ${yellow(filteredBundles.length.toString())} (${format(totalBytes)})`,
+    `Matched Items:      ${yellow(filteredBundles.length.toString())} (${
+      format(totalBytes)
+    })`,
   );
   console.log(
-    `Downloaded Locally: ${green(downloadedCount.toString())} / ${filteredBundles.length} (${format(downloadedBytes)})`,
+    `Downloaded Locally: ${
+      green(downloadedCount.toString())
+    } / ${filteredBundles.length} (${format(downloadedBytes)})`,
   );
   console.log(
-    `Missing Locally:    ${yellow((filteredBundles.length - downloadedCount).toString())} (${format(Math.max(0, totalBytes - downloadedBytes))})`,
+    `Missing Locally:    ${
+      yellow((filteredBundles.length - downloadedCount).toString())
+    } (${format(Math.max(0, totalBytes - downloadedBytes))})`,
   );
 
   if (sortedFormats.length > 0) {
     console.log(`\n${cyan("--- Breakdown by Format ---")}`);
     for (const [fmt, info] of sortedFormats) {
       console.log(
-        `  ${fmt.padEnd(12)} : ${info.count.toString().padStart(5)} items (${format(info.bytes)})`,
+        `  ${fmt.padEnd(12)} : ${info.count.toString().padStart(5)} items (${
+          format(info.bytes)
+        })`,
       );
     }
   }
@@ -815,11 +1089,24 @@ export async function printLibraryStats(
     console.log(`\n${cyan("--- Top Publishers ---")}`);
     for (const [pub, info] of sortedPublishers) {
       console.log(
-        `  ${pub.slice(0, 28).padEnd(28)} : ${info.count.toString().padStart(5)} items (${format(info.bytes)})`,
+        `  ${pub.slice(0, 28).padEnd(28)} : ${
+          info.count.toString().padStart(5)
+        } items (${format(info.bytes)})`,
       );
     }
   }
   console.log("");
+}
+
+const UUID_GAMEKEY_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Returns true if a bundle comes from Humble's pre-migration legacy key format
+ * (non-UUID gamekey, retained from `bundles.json` / `bundles.legacy.json`).
+ */
+export function isUnmigratedLegacyBundle(bundle: Bundle): boolean {
+  return Boolean(bundle.gamekey) && !UUID_GAMEKEY_RE.test(bundle.gamekey);
 }
 
 /**
@@ -911,6 +1198,7 @@ export async function printBundlesList(
       total: stats.total,
       bytes: stats.bytes,
       choicesRemaining: b.choices_remaining ?? 0,
+      unmigratedLegacy: isUnmigratedLegacyBundle(b),
     };
   });
 
@@ -922,12 +1210,19 @@ export async function printBundlesList(
   console.log(`\n${cyan(`=== Purchased Bundles (${rows.length}) ===`)}`);
   for (const r of rows) {
     const statusStr = `${r.downloaded}/${r.total}`.padStart(7);
-    const statusColor = r.total > 0 && r.downloaded === r.total ? green : yellow;
+    const statusColor = r.total > 0 && r.downloaded === r.total
+      ? green
+      : yellow;
     const choiceBadge = r.choicesRemaining > 0
       ? ` ${yellow(`[${r.choicesRemaining} choice(s) left]`)}`
       : "";
+    const legacyBadge = r.unmigratedLegacy
+      ? ` ${cyan("[Unmigrated Legacy]")}`
+      : "";
     console.log(
-      `  ${r.date} | ${r.gameKey.padEnd(16)} | ${statusColor(statusStr)} (${format(r.bytes).padStart(9)}) | ${r.name}${choiceBadge}`,
+      `  ${r.date} | ${r.gameKey.padEnd(16)} | ${statusColor(statusStr)} (${
+        format(r.bytes).padStart(9)
+      }) | ${r.name}${choiceBadge}${legacyBadge}`,
     );
   }
   console.log("");
@@ -956,11 +1251,17 @@ export interface UnclaimedReport {
     label: string;
     url: string;
   }[];
+  unmigratedLegacy: {
+    date: string;
+    gameKey: string;
+    bundle: string;
+    itemCount: number;
+  }[];
 }
 
 /**
  * Inspects `bundles` for unclaimed Humble Choice picks, unredeemed third-party keys
- * (`empty_tpkds`), and external-link-only downloads (`unclaimed` command).
+ * (`empty_tpkds`), external-link-only downloads, and unmigrated legacy orders (`unclaimed` command).
  */
 export function buildUnclaimedReport(
   bundles: Bundle[],
@@ -970,6 +1271,7 @@ export function buildUnclaimedReport(
   const unclaimedChoices: UnclaimedReport["unclaimedChoices"] = [];
   const unredeemedKeys: UnclaimedReport["unredeemedKeys"] = [];
   const externalLinks: UnclaimedReport["externalLinks"] = [];
+  const unmigratedLegacy: UnclaimedReport["unmigratedLegacy"] = [];
 
   for (const b of bundles) {
     if (filters && !filters.matchesBundleKey(b.gamekey ?? "")) continue;
@@ -985,6 +1287,15 @@ export function buildUnclaimedReport(
     const dateStr = isNaN(createdDate.getTime())
       ? ""
       : createdDate.toISOString().split("T")[0];
+
+    if (isUnmigratedLegacyBundle(b)) {
+      unmigratedLegacy.push({
+        date: dateStr,
+        gameKey: b.gamekey,
+        bundle: b.product.human_name,
+        itemCount: b.subproducts?.length ?? 0,
+      });
+    }
 
     if ((b.choices_remaining ?? 0) > 0) {
       unclaimedChoices.push({
@@ -1013,7 +1324,9 @@ export function buildUnclaimedReport(
         }
       }
     } else if (rawTpkds && typeof rawTpkds === "object") {
-      for (const [k, v] of Object.entries(rawTpkds as Record<string, unknown>)) {
+      for (
+        const [k, v] of Object.entries(rawTpkds as Record<string, unknown>)
+      ) {
         if (Array.isArray(v) && v.length > 0) {
           keyLabels.push(`${k} (${v.length})`);
         } else if (v && typeof v === "object") {
@@ -1048,7 +1361,7 @@ export function buildUnclaimedReport(
     }
   }
 
-  return { unclaimedChoices, unredeemedKeys, externalLinks };
+  return { unclaimedChoices, unredeemedKeys, externalLinks, unmigratedLegacy };
 }
 
 /**
@@ -1067,32 +1380,234 @@ export function printUnclaimedReport(
 
   console.log(`\n${cyan("=== Unclaimed Choices, Keys & External Links ===")}`);
   console.log(
-    `Unclaimed Choice Bundles: ${yellow(report.unclaimedChoices.length.toString())}`,
+    `Unclaimed Choice Bundles: ${
+      yellow(report.unclaimedChoices.length.toString())
+    }`,
   );
   for (const c of report.unclaimedChoices) {
     console.log(
-      `  ${c.date} | ${c.gameKey.padEnd(16)} | ${yellow(`${c.choicesRemaining}/${c.totalChoices} left`)} | ${c.bundle}`,
+      `  ${c.date} | ${c.gameKey.padEnd(16)} | ${
+        yellow(`${c.choicesRemaining}/${c.totalChoices} left`)
+      } | ${c.bundle}`,
     );
   }
 
   console.log(
-    `Bundles w/ Unused Keys:   ${yellow(report.unredeemedKeys.length.toString())}`,
+    `Bundles w/ Unused Keys:   ${
+      yellow(report.unredeemedKeys.length.toString())
+    }`,
   );
   for (const k of report.unredeemedKeys) {
     console.log(
-      `  ${k.date} | ${k.gameKey.padEnd(16)} | ${yellow(`${k.keyCount} key(s)`)} | ${k.bundle}: ${k.items.slice(0, 5).join(", ")}${k.items.length > 5 ? "..." : ""}`,
+      `  ${k.date} | ${k.gameKey.padEnd(16)} | ${
+        yellow(`${k.keyCount} key(s)`)
+      } | ${k.bundle}: ${k.items.slice(0, 5).join(", ")}${
+        k.items.length > 5 ? "..." : ""
+      }`,
     );
   }
 
   console.log(
-    `External-Only Downloads:  ${yellow(report.externalLinks.length.toString())}`,
+    `External-Only Downloads:  ${
+      yellow(report.externalLinks.length.toString())
+    }`,
   );
   for (const ext of report.externalLinks) {
     console.log(
-      `  ${ext.gameKey.padEnd(16)} | ${ext.product} (${ext.label}) -> ${ext.url}`,
+      `  ${
+        ext.gameKey.padEnd(16)
+      } | ${ext.product} (${ext.label}) -> ${ext.url}`,
+    );
+  }
+
+  console.log(
+    `Unmigrated Legacy Orders: ${
+      yellow(report.unmigratedLegacy.length.toString())
+    }`,
+  );
+  for (const leg of report.unmigratedLegacy) {
+    console.log(
+      `  ${leg.date} | ${leg.gameKey.padEnd(16)} | ${
+        cyan(`${leg.itemCount} item(s)`)
+      } | ${leg.bundle}`,
     );
   }
   console.log("");
+}
+
+export interface DiffReport {
+  newBundles: { date: string; gameKey: string; name: string }[];
+  newlyMigratedBundles: { date: string; gameKey: string; name: string }[];
+  newDownloads: { bundle: string; fileName: string; filePath: string }[];
+  changedDownloads: { bundle: string; fileName: string; filePath: string }[];
+  removedFiles: string[];
+}
+
+/**
+ * Computes and prints a `--diff` summary of new bundles, newly migrated legacy bundles,
+ * new/changed download targets, and extra files that `clean()` would remove/trash.
+ */
+export async function computeAndPrintDiff(
+  previousBundles: Bundle[],
+  currentBundles: Bundle[],
+  filteredBundles: DownloadInfo[],
+  checksums: Record<string, Checksums>,
+  options: Options,
+  progress?: MultiBarWrapper,
+): Promise<DiffReport> {
+  const prevKeys = new Set(previousBundles.map((b) => b.gamekey));
+  const prevLegacyTitles = new Set(
+    previousBundles
+      .filter((b) => isUnmigratedLegacyBundle(b))
+      .map((b) => b.product.human_name.toLowerCase()),
+  );
+
+  const newBundles: DiffReport["newBundles"] = [];
+  const newlyMigratedBundles: DiffReport["newlyMigratedBundles"] = [];
+
+  for (const b of currentBundles) {
+    if (!b.gamekey || prevKeys.has(b.gamekey)) continue;
+    const date = new Date(b.created).toISOString().split("T")[0];
+    const row = { date, gameKey: b.gamekey, name: b.product.human_name };
+    if (
+      !isUnmigratedLegacyBundle(b) &&
+      prevLegacyTitles.has(b.product.human_name.toLowerCase())
+    ) {
+      newlyMigratedBundles.push(row);
+    } else {
+      newBundles.push(row);
+    }
+  }
+
+  const newDownloads: DiffReport["newDownloads"] = [];
+  const changedDownloads: DiffReport["changedDownloads"] = [];
+  const missingCacheChecks: DownloadInfo[] = [];
+
+  for (const item of filteredBundles) {
+    const cacheKey = getChecksumCacheKey(
+      item.filePath,
+      item.fileName,
+      options.downloadFolder,
+    );
+    const cached = checksums[cacheKey] ?? checksums[item.fileName];
+    if (cached) {
+      const sha1Changed = Boolean(
+        item.sha1 && cached.sha1 && item.sha1 !== cached.sha1,
+      );
+      const md5Changed = Boolean(
+        item.md5 && cached.md5 && item.md5 !== cached.md5,
+      );
+      if (sha1Changed || md5Changed) {
+        changedDownloads.push({
+          bundle: item.bundle,
+          fileName: item.fileName,
+          filePath: item.filePath,
+        });
+      }
+    } else {
+      missingCacheChecks.push(item);
+    }
+  }
+
+  const BATCH_SIZE = 32;
+  for (let i = 0; i < missingCacheChecks.length; i += BATCH_SIZE) {
+    const batch = missingCacheChecks.slice(i, i + BATCH_SIZE);
+    const existsList = await Promise.all(
+      batch.map(async (item) => {
+        try {
+          const st = await Deno.stat(item.filePath);
+          return st.isFile;
+        } catch {
+          return false;
+        }
+      }),
+    );
+    for (let j = 0; j < batch.length; j++) {
+      if (!existsList[j]) {
+        newDownloads.push({
+          bundle: batch[j].bundle,
+          fileName: batch[j].fileName,
+          filePath: batch[j].filePath,
+        });
+      }
+    }
+  }
+
+  const removedFiles: string[] = [];
+  if (!compileItemFilters(options).hasSubsetFilter) {
+    const { allowedPaths, extractedPrefixes } = buildAllowedCleanPaths(
+      filteredBundles,
+      options,
+    );
+    try {
+      for await (const file of walkExistingFiles(options, true)) {
+        if (
+          !isPathAllowedForClean(file.path, allowedPaths, extractedPrefixes)
+        ) {
+          removedFiles.push(file.path);
+        }
+      }
+    } catch {
+      // Download folder may not exist yet
+    }
+  }
+
+  const report: DiffReport = {
+    newBundles,
+    newlyMigratedBundles,
+    newDownloads,
+    changedDownloads,
+    removedFiles,
+  };
+
+  const log = (msg: string) => {
+    if (progress) {
+      progress.log(msg);
+    } else {
+      console.log(msg);
+    }
+  };
+
+  if (options.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return report;
+  }
+
+  log(`\n${cyan("=== Library Diff Summary ===")}`);
+  log(`New Bundles:            ${yellow(newBundles.length.toString())}`);
+  for (const b of newBundles.slice(0, 10)) {
+    log(`  + ${b.date} | ${b.gameKey} | ${b.name}`);
+  }
+  if (newBundles.length > 10) {
+    log(`  ... and ${newBundles.length - 10} more`);
+  }
+
+  log(
+    `Newly Migrated Legacy:  ${yellow(newlyMigratedBundles.length.toString())}`,
+  );
+  for (const b of newlyMigratedBundles.slice(0, 10)) {
+    log(`  ~ ${b.date} | ${b.gameKey} | ${b.name}`);
+  }
+
+  log(`New Files to Download:  ${green(newDownloads.length.toString())}`);
+  log(`Changed Hashes/Files:   ${yellow(changedDownloads.length.toString())}`);
+  for (const c of changedDownloads.slice(0, 10)) {
+    log(`  ! ${c.fileName} (${c.bundle})`);
+  }
+  log(
+    `${options.backupReplaced ? "Files to Trash" : "Files to Remove"}:        ${
+      red(removedFiles.length.toString())
+    }`,
+  );
+  for (const r of removedFiles.slice(0, 10)) {
+    log(`  - ${r}`);
+  }
+  if (removedFiles.length > 10) {
+    log(`  ... and ${removedFiles.length - 10} more`);
+  }
+  log("");
+
+  return report;
 }
 
 /**
@@ -1106,13 +1621,19 @@ export function printRunSummary(totals: Totals, jsonOutput = false): void {
   console.log(`\n${cyan("=== Run Summary ===")}`);
   console.log(`Bundles Processed:   ${yellow(totals.bundles.toString())}`);
   console.log(
-    `Filtered Items:      ${yellow(totals.filteredDownloads.toString())} (from ${totals.preFilteredDownloads} total candidates)`,
+    `Filtered Items:      ${
+      yellow(totals.filteredDownloads.toString())
+    } (from ${totals.preFilteredDownloads} total candidates)`,
   );
   console.log(
-    `Checksums Loaded:    ${green(totals.checksumsLoaded.toString())} (computed ${totals.checksums} new)`,
+    `Checksums Loaded:    ${
+      green(totals.checksumsLoaded.toString())
+    } (computed ${totals.checksums} new)`,
   );
   console.log(
-    `Downloads Queued:    ${yellow(totals.downloads.toString())} (${green(totals.doneDownloads.toString())} completed/verified)`,
+    `Downloads Queued:    ${yellow(totals.downloads.toString())} (${
+      green(totals.doneDownloads.toString())
+    } completed/verified)`,
   );
   if (totals.movedFiles) {
     console.log(

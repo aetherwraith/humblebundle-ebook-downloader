@@ -13,18 +13,22 @@ export const COMPOUND_EXTENSIONS = [
  * Strips the file extension (including compound extensions like `.hd.pdf` or `.tar.gz`,
  * and `.torrent` suffixes) from a file path or filename.
  */
+const EXT_STRIP_RE = /\.[^./\\]+$/;
+
 export function stripFileExtension(filePath: string): string {
-  let working = filePath;
-  if (working.toLowerCase().endsWith(".torrent")) {
-    working = working.slice(0, -".torrent".length);
-  }
-  const lower = working.toLowerCase();
+  const lower = filePath.toLowerCase();
+  const working = lower.endsWith(".torrent")
+    ? filePath.slice(0, -".torrent".length)
+    : filePath;
+  const workingLower = lower.endsWith(".torrent")
+    ? lower.slice(0, -".torrent".length)
+    : lower;
   for (const compound of COMPOUND_EXTENSIONS) {
-    if (lower.endsWith(compound)) {
+    if (workingLower.endsWith(compound)) {
       return working.slice(0, -compound.length);
     }
   }
-  return working.replace(/\.[^./\\]+$/, "");
+  return working.replace(EXT_STRIP_RE, "");
 }
 
 /**
@@ -44,7 +48,10 @@ export function replaceFileExtension(filePath: string, newExt: string): string {
 export function normalizeBundleKey(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
-  if (trimmed.includes("://") || trimmed.includes("key=") || trimmed.includes("/home/library/")) {
+  if (
+    trimmed.includes("://") || trimmed.includes("key=") ||
+    trimmed.includes("/home/library/")
+  ) {
     try {
       const parsed = new URL(
         trimmed.includes("://")
@@ -104,12 +111,17 @@ export function parseCookieInput(input: string): string {
     .replace(/\r?\n/g, "; ")
     .replace(/^cookie:\s*/i, "")
     .trim();
-  if (singleLine.includes(";") || /^(ory_session_|_simpleauth_sess|csrf_)/i.test(singleLine)) {
+  if (
+    singleLine.includes(";") ||
+    /^(ory_session_|_simpleauth_sess|csrf_)/i.test(singleLine)
+  ) {
     return singleLine;
   }
   // Check if `key=value` where key is a valid cookie identifier (not base64 padding `==`)
   const eqIdx = singleLine.indexOf("=");
-  if (eqIdx > 0 && /^[a-zA-Z_][a-zA-Z0-9_$-]*$/.test(singleLine.slice(0, eqIdx))) {
+  if (
+    eqIdx > 0 && /^[a-zA-Z_][a-zA-Z0-9_$-]*$/.test(singleLine.slice(0, eqIdx))
+  ) {
     return singleLine;
   }
 
@@ -153,6 +165,9 @@ const textDecoder = new TextDecoder();
  * Truncates a string so its UTF-8 byte length does not exceed `byteLength`.
  */
 function truncateUtf8Bytes(str: string, byteLength: number): string {
+  // Fast path: each UTF-16 code unit encodes to at most 3 UTF-8 bytes (or 4 for surrogate pairs).
+  // If str.length * 4 <= byteLength, UTF-8 byte length is guaranteed <= byteLength.
+  if (str.length * 4 <= byteLength) return str;
   const bytes = textEncoder.encode(str);
   if (bytes.byteLength <= byteLength) return str;
   // Walk backwards from byteLength to avoid splitting a multi-byte UTF-8 sequence
@@ -255,60 +270,50 @@ export function getExtension(format: string): string {
  * `aac`, `opus`, `ogg`, `mp3`, `rex`) from a Humble struct name and/or download URL filename.
  * Returns `undefined` when the struct is an untagged archive (e.g. generic `ZIP:ost.zip`).
  */
+const AUDIO_FORMAT_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bflac\d*\b|[a-z0-9_-]flac\d*(?:[_.-]|\b|$)/i, "flac"],
+  [/\balac\d*\b|[a-z0-9_-]alac\d*(?:[_.-]|\b|$)/i, "alac"],
+  [
+    /\bwav(?:24bit)?\b|[a-z0-9_-]wav(?:24bit)?(?:[_.-]|\b|$)|\.wav$/i,
+    "wav",
+  ],
+  [/\baiff?\b|[_-]aiff?(?:[_.-]|\b|$)|\.aiff?$/i, "aiff"],
+  [/\bm4b\b|[_-]m4b(?:[_.-]|\b|$)|\.m4b$/i, "m4b"],
+  [/\bm4a\b|[_-]m4a(?:[_.-]|\b|$)|\.m4a$/i, "m4a"],
+  [/\baac\d*\b|[a-z0-9_-]aac\d*(?:[_.-]|\b|$)|\.aac$/i, "aac"],
+  [/\bopus\b|[_-]opus(?:[_.-]|\b|$)|\.opus$/i, "opus"],
+  [/\bogg\b|[_-]ogg(?:[_.-]|\b|$)|\.ogg$/i, "ogg"],
+  [
+    /\bmp3\d*\b|[a-z0-9_-]mp3\d*(?:[_.-]|\b|$)|\b320cbr\b|[_-]320cbr(?:[_.-]|\b|$)|\.mp3$/i,
+    "mp3",
+  ],
+  [/[_-](?:rex|rmx|rx2)(?:[_.-]|$)|\.(?:rex|rmx|rx2)$/i, "rex"],
+];
+
+function extractLastPathSegment(urlPath: string): string {
+  const qIdx = urlPath.indexOf("?");
+  const hIdx = urlPath.indexOf("#");
+  let end = urlPath.length;
+  if (qIdx !== -1 && qIdx < end) end = qIdx;
+  if (hIdx !== -1 && hIdx < end) end = hIdx;
+  const cleanPath = urlPath.slice(0, end);
+  const slashIdx = cleanPath.lastIndexOf("/");
+  const rawSeg = slashIdx === -1 ? cleanPath : cleanPath.slice(slashIdx + 1);
+  try {
+    return decodeURIComponent(rawSeg);
+  } catch {
+    return rawSeg;
+  }
+}
+
 export function detectAudioFormat(
   structName?: string,
   urlPath?: string,
 ): string | undefined {
-  let fileBase = "";
-  if (urlPath) {
-    try {
-      const parsed = new URL(urlPath, "https://www.humblebundle.com/");
-      const segs = parsed.pathname.split("/");
-      fileBase = decodeURIComponent(segs[segs.length - 1] ?? "");
-    } catch {
-      fileBase = urlPath;
-    }
-  }
+  const fileBase = urlPath ? extractLastPathSegment(urlPath) : "";
   const combined = `${structName ?? ""} ${fileBase}`;
-  if (/\bflac\d*\b|[a-z0-9_-]flac\d*(?:[_.-]|\b|$)/i.test(combined)) {
-    return "flac";
-  }
-  if (/\balac\d*\b|[a-z0-9_-]alac\d*(?:[_.-]|\b|$)/i.test(combined)) {
-    return "alac";
-  }
-  if (
-    /\bwav(?:24bit)?\b|[a-z0-9_-]wav(?:24bit)?(?:[_.-]|\b|$)|\.wav$/i.test(
-      combined,
-    )
-  ) {
-    return "wav";
-  }
-  if (/\baiff?\b|[_-]aiff?(?:[_.-]|\b|$)|\.aiff?$/i.test(combined)) {
-    return "aiff";
-  }
-  if (/\bm4b\b|[_-]m4b(?:[_.-]|\b|$)|\.m4b$/i.test(combined)) {
-    return "m4b";
-  }
-  if (/\bm4a\b|[_-]m4a(?:[_.-]|\b|$)|\.m4a$/i.test(combined)) {
-    return "m4a";
-  }
-  if (/\baac\d*\b|[a-z0-9_-]aac\d*(?:[_.-]|\b|$)|\.aac$/i.test(combined)) {
-    return "aac";
-  }
-  if (/\bopus\b|[_-]opus(?:[_.-]|\b|$)|\.opus$/i.test(combined)) {
-    return "opus";
-  }
-  if (/\bogg\b|[_-]ogg(?:[_.-]|\b|$)|\.ogg$/i.test(combined)) {
-    return "ogg";
-  }
-  if (
-    /\bmp3\d*\b|[a-z0-9_-]mp3\d*(?:[_.-]|\b|$)|\b320cbr\b|[_-]320cbr(?:[_.-]|\b|$)|\.mp3$/i
-      .test(combined)
-  ) {
-    return "mp3";
-  }
-  if (/[_-](?:rex|rmx|rx2)(?:[_.-]|$)|\.(?:rex|rmx|rx2)$/i.test(combined)) {
-    return "rex";
+  for (const [re, fmt] of AUDIO_FORMAT_RULES) {
+    if (re.test(combined)) return fmt;
   }
   return undefined;
 }
@@ -324,6 +329,17 @@ export function normalizeAudioFormat(format: string): string {
   return lower;
 }
 
+const VIDEO_QUALITY_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(2160p|4k|uhd)\b|2160p|(?:^|[a-z_-])2160p?(?:[_.-]|$)/i, "2160p"],
+  [/\b(1440p|2k|qhd)\b|1440p|(?:^|[a-z_-])1440p?(?:[_.-]|$)/i, "1440p"],
+  [/\b(1080p|fhd|full\s*hd)\b|1080p|(?:^|[a-z_-])1080p?(?:[_.-]|$)/i, "1080p"],
+  [/\b720p\b|720p|(?:^|[a-z_-])720p?(?:[_.-]|$)/i, "720p"],
+  [/\b480p\b|480p|(?:^|[a-z_-])480p?(?:[_.-]|$)/i, "480p"],
+  [/\b360p\b|360p|(?:^|[a-z_-])360p?(?:[_.-]|$)/i, "360p"],
+  [/\bhd\b/i, "hd"],
+  [/\bsd\b/i, "sd"],
+];
+
 /**
  * Normalizes a video quality string or struct label/filename to a canonical resolution tier.
  * Recognizes: '2160p' (or '4k', 'uhd'), '1440p' ('2k', 'qhd'), '1080p' ('full hd', 'fhd'),
@@ -333,54 +349,8 @@ export function normalizeAudioFormat(format: string): string {
  * @returns Canonical quality string or undefined if none detected
  */
 export function detectVideoQuality(label: string): string | undefined {
-  const lower = label.toLowerCase();
-  if (
-    /\b(2160p|4k|uhd)\b/.test(lower) ||
-    lower.includes("2160p") ||
-    /(?:^|[a-z_-])2160p?(?:[_.-]|$)/.test(lower)
-  ) {
-    return "2160p";
-  }
-  if (
-    /\b(1440p|2k|qhd)\b/.test(lower) ||
-    lower.includes("1440p") ||
-    /(?:^|[a-z_-])1440p?(?:[_.-]|$)/.test(lower)
-  ) {
-    return "1440p";
-  }
-  if (
-    /\b(1080p|fhd|full\s*hd)\b/.test(lower) ||
-    lower.includes("1080p") ||
-    /(?:^|[a-z_-])1080p?(?:[_.-]|$)/.test(lower)
-  ) {
-    return "1080p";
-  }
-  if (
-    /\b720p\b/.test(lower) ||
-    lower.includes("720p") ||
-    /(?:^|[a-z_-])720p?(?:[_.-]|$)/.test(lower)
-  ) {
-    return "720p";
-  }
-  if (
-    /\b480p\b/.test(lower) ||
-    lower.includes("480p") ||
-    /(?:^|[a-z_-])480p?(?:[_.-]|$)/.test(lower)
-  ) {
-    return "480p";
-  }
-  if (
-    /\b360p\b/.test(lower) ||
-    lower.includes("360p") ||
-    /(?:^|[a-z_-])360p?(?:[_.-]|$)/.test(lower)
-  ) {
-    return "360p";
-  }
-  if (/\bhd\b/.test(lower)) {
-    return "hd";
-  }
-  if (/\bsd\b/.test(lower)) {
-    return "sd";
+  for (const [re, tier] of VIDEO_QUALITY_RULES) {
+    if (re.test(label)) return tier;
   }
   return undefined;
 }
@@ -426,28 +396,28 @@ export function getVideoQualityScore(
  * Parses a human-readable size string (e.g. "500MB", "2.5 GB", "1024KB", "1048576")
  * into bytes. Returns undefined if the input is empty or invalid.
  */
+const SIZE_RE = /^(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib|gb|gib|tb|tib)?$/i;
+const SIZE_MULTIPLIERS: Record<string, number> = {
+  b: 1,
+  kb: 1000,
+  kib: 1024,
+  mb: 1000 ** 2,
+  mib: 1024 ** 2,
+  gb: 1000 ** 3,
+  gib: 1024 ** 3,
+  tb: 1000 ** 4,
+  tib: 1024 ** 4,
+};
+
 export function parseSize(sizeStr?: string): number | undefined {
   if (!sizeStr) return undefined;
-  const match = sizeStr.trim().match(
-    /^(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib|gb|gib|tb|tib)?$/i,
-  );
+  const match = sizeStr.trim().match(SIZE_RE);
   if (!match) return undefined;
   const value = parseFloat(match[1]);
   if (isNaN(value) || value < 0) return undefined;
 
   const unit = (match[2] ?? "b").toLowerCase();
-  const multipliers: Record<string, number> = {
-    b: 1,
-    kb: 1000,
-    kib: 1024,
-    mb: 1000 ** 2,
-    mib: 1024 ** 2,
-    gb: 1000 ** 3,
-    gib: 1024 ** 3,
-    tb: 1000 ** 4,
-    tib: 1024 ** 4,
-  };
-  return Math.floor(value * (multipliers[unit] ?? 1));
+  return Math.floor(value * (SIZE_MULTIPLIERS[unit] ?? 1));
 }
 
 /**
@@ -511,13 +481,15 @@ export function createExcludeMatcher(
  * When `endOfDay` is true and a date-only string ("YYYY-MM-DD") is provided,
  * sets the time to 23:59:59.999 UTC so the entire day is included.
  */
+const ISO_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export function parseDateOption(
   dateStr?: string,
   endOfDay = false,
 ): Date | undefined {
   if (!dateStr || !dateStr.trim()) return undefined;
   const trimmed = dateStr.trim();
-  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+  const isDateOnly = ISO_DATE_ONLY_RE.test(trimmed);
   const parsed = new Date(
     isDateOnly
       ? `${trimmed}T${endOfDay ? "23:59:59.999Z" : "00:00:00.000Z"}`
@@ -544,12 +516,21 @@ export interface OutputTemplateVars {
   format: string;
   ext: string;
   year: string;
+  month?: string;
+  day?: string;
+  date?: string;
+  gamekey?: string;
+  platform?: string;
   filename: string;
 }
 
+const TEMPLATE_TOKEN_RE =
+  /\{(bundle|publisher|product|title|format|ext|year|month|day|date|gamekey|platform|filename)\}/gi;
+const PATH_SPLIT_RE = /[/\\]+/;
+
 /**
  * Resolves a custom `--output-template` string into `{ downloadPath, fileName, filePath }`.
- * Supported placeholders: `{bundle}`, `{publisher}`, `{product}` (or `{title}`), `{format}`, `{ext}`, `{year}`, `{filename}`.
+ * Supported placeholders: `{bundle}`, `{publisher}`, `{product}` (or `{title}`), `{format}`, `{ext}`, `{year}`, `{month}`, `{day}`, `{date}`, `{gamekey}`, `{platform}`, `{filename}`.
  */
 export function resolveOutputTemplate(
   downloadFolder: string,
@@ -558,25 +539,64 @@ export function resolveOutputTemplate(
 ): { downloadPath: string; fileName: string; filePath: string } {
   const cleanExt = vars.ext.replace(/^\./, "");
   const dotExt = cleanExt ? `.${cleanExt}` : "";
-  const replacements: Record<string, string> = {
-    bundle: sanitizeFilename(vars.bundle) || "Unknown Bundle",
-    publisher: sanitizeFilename(vars.publisher || "Unknown Publisher") ||
-      "Unknown Publisher",
-    product: sanitizeFilename(vars.product) || "Unknown Product",
-    title: sanitizeFilename(vars.product) || "Unknown Product",
-    format: sanitizeFilename(vars.format.toLowerCase()) || "file",
-    ext: sanitizeFilename(cleanExt),
-    year: sanitizeFilename(vars.year) || "0000",
-    filename: sanitizeFilename(vars.filename),
+  const cache: Record<string, string> = {};
+
+  const getToken = (rawKey: string): string => {
+    const key = rawKey.toLowerCase();
+    if (key in cache) return cache[key];
+    let val = "";
+    switch (key) {
+      case "bundle":
+        val = sanitizeFilename(vars.bundle) || "Unknown Bundle";
+        break;
+      case "publisher":
+        val = sanitizeFilename(vars.publisher || "Unknown Publisher") ||
+          "Unknown Publisher";
+        break;
+      case "product":
+      case "title":
+        val = sanitizeFilename(vars.product) || "Unknown Product";
+        break;
+      case "format":
+        val = sanitizeFilename(vars.format.toLowerCase()) || "file";
+        break;
+      case "ext":
+        val = sanitizeFilename(cleanExt);
+        break;
+      case "year":
+        val = sanitizeFilename(vars.year) || "0000";
+        break;
+      case "month":
+        val = sanitizeFilename(vars.month ?? "01") || "01";
+        break;
+      case "day":
+        val = sanitizeFilename(vars.day ?? "01") || "01";
+        break;
+      case "date":
+        val = sanitizeFilename(vars.date ?? `${vars.year || "0000"}-01-01`);
+        break;
+      case "gamekey":
+        val = sanitizeFilename(vars.gamekey ?? "") || "unknown";
+        break;
+      case "platform":
+        val = sanitizeFilename((vars.platform ?? vars.format).toLowerCase()) ||
+          "file";
+        break;
+      case "filename":
+        val = sanitizeFilename(vars.filename);
+        break;
+    }
+    cache[key] = val;
+    return val;
   };
 
   const rendered = template.replace(
-    /\{(bundle|publisher|product|title|format|ext|year|filename)\}/gi,
-    (_match, key: string) => replacements[key.toLowerCase()] ?? "",
+    TEMPLATE_TOKEN_RE,
+    (_match, key: string) => getToken(key),
   );
 
   const segments = rendered
-    .split(/[/\\]+/)
+    .split(PATH_SPLIT_RE)
     .map((s) => sanitizeFilename(s.trim()))
     .filter(Boolean);
 
@@ -614,7 +634,9 @@ export interface CompiledItemFilters {
  * Pre-compiles bundle key, text include/exclude, byte size, and date range filters
  * from CLI `options` for fast reuse across thousands of catalog entries.
  */
-export function compileItemFilters(options: Partial<Options>): CompiledItemFilters {
+export function compileItemFilters(
+  options: Partial<Options>,
+): CompiledItemFilters {
   const bundleKeySet = parseBundleKeys(options.bundleKey);
   const filterMatch = createFilterMatcher(options.filter);
   const excludeMatch = createExcludeMatcher(options.exclude);

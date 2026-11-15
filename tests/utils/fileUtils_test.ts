@@ -4,6 +4,7 @@ import { join } from "@std/path";
 import {
   buildUnclaimedReport,
   clean,
+  computeAndPrintDiff,
   deleteEmptyFolders,
   exportCatalog,
   generateAudioPlaylists,
@@ -11,10 +12,13 @@ import {
   isChecksumCacheDirty,
   isExtractableArchive,
   loadChecksumCache,
+  pruneTrash,
   readJsonFile,
   walkExistingFiles,
+  writeExternalLinkSidecars,
   writeJsonFile,
   writeJsonFileSync,
+  writeNfoSidecar,
   writeOpfSidecar,
 } from "../../utils/fileUtils.ts";
 import { DownloadInfo, Options, Totals } from "../../types/general.ts";
@@ -150,7 +154,10 @@ Deno.test("clean - protects activePartFiles and skips when --exclude or --since 
     const excludeOpts = { downloadFolder: dir, exclude: "sample" } as Options;
     const totals = { removedFiles: 0, removedChecksums: 0 } as Totals;
     await clean([], {}, excludeOpts, totals);
-    assert(await exists(stalePart), "stalePart untouched when --exclude active");
+    assert(
+      await exists(stalePart),
+      "stalePart untouched when --exclude active",
+    );
 
     // 2. Normal clean() with activePartFiles protects activePart while removing stalePart
     const normalOpts = { downloadFolder: dir } as Options;
@@ -172,8 +179,14 @@ Deno.test("readJsonFile - reads valid JSON and returns empty object on missing o
     assertEquals(malformed, {});
 
     // Valid JSON
-    await Deno.writeTextFile(join(dir, "valid.json"), JSON.stringify({ a: 1, b: "two" }));
-    const valid = await readJsonFile<{ a: number; b: string }>(dir, "valid.json");
+    await Deno.writeTextFile(
+      join(dir, "valid.json"),
+      JSON.stringify({ a: 1, b: "two" }),
+    );
+    const valid = await readJsonFile<{ a: number; b: string }>(
+      dir,
+      "valid.json",
+    );
     assertEquals(valid.a, 1);
     assertEquals(valid.b, "two");
   });
@@ -416,4 +429,284 @@ Deno.test("buildUnclaimedReport - detects unclaimed Choice picks, unredeemed key
     report.externalLinks[0].url,
     "https://publisher.example.com/redeem",
   );
+  assertEquals(report.unmigratedLegacy.length, 1);
+  assertEquals(report.unmigratedLegacy[0].gameKey, "choice_key_1");
+});
+
+Deno.test("writeJsonFile - writes compact JSON for large caches and pretty JSON for config files", async () => {
+  await withTempDir(async (dir) => {
+    await writeJsonFile(dir, "bundles.json", [{ gamekey: "k1" }]);
+    await writeJsonFile(dir, "options.json", { parallel: 5 });
+
+    const bundlesRaw = await Deno.readTextFile(join(dir, "bundles.json"));
+    const optionsRaw = await Deno.readTextFile(join(dir, "options.json"));
+
+    assertEquals(bundlesRaw, '[{"gamekey":"k1"}]');
+    assert(
+      optionsRaw.includes("\n"),
+      "options.json should remain pretty-printed",
+    );
+  });
+});
+
+Deno.test("writeNfoSidecar - writes album and movie .nfo XML sidecars", async () => {
+  await withTempDir(async (dir) => {
+    const audioItem: DownloadInfo = {
+      name: "OST Track",
+      bundle: "Music Bundle",
+      publisher: "Composer Studio",
+      gameKey: "k1",
+      machineName: "ost_track",
+      fileName: "track.flac",
+      downloadPath: dir,
+      filePath: join(dir, "track.flac"),
+      url: new URL("https://example.com/track.flac"),
+      structName: "FLAC",
+      date: new Date("2025-05-10T00:00:00Z"),
+    };
+    const videoItem: DownloadInfo = {
+      name: "Standup Special",
+      bundle: "Comedy Bundle",
+      publisher: "Comedy Records",
+      gameKey: "k2",
+      machineName: "special_1",
+      fileName: "special.mp4",
+      downloadPath: dir,
+      filePath: join(dir, "special.mp4"),
+      url: new URL("https://example.com/special.mp4"),
+      structName: "1080p",
+      date: new Date("2025-06-15T00:00:00Z"),
+    };
+
+    await writeNfoSidecar(audioItem, true);
+    await writeNfoSidecar(videoItem, true);
+
+    const audioNfo = await Deno.readTextFile(join(dir, "track.nfo"));
+    const videoNfo = await Deno.readTextFile(join(dir, "special.nfo"));
+
+    assert(audioNfo.includes("<album>"));
+    assert(audioNfo.includes("<title>OST Track</title>"));
+    assert(videoNfo.includes("<movie>"));
+    assert(
+      videoNfo.includes("<set>\n    <name>Comedy Bundle</name>\n  </set>"),
+    );
+  });
+});
+
+Deno.test("clean with backupReplaced - moves extra files to .trash and protects .nfo/.trash", async () => {
+  await withTempDir(async (dir) => {
+    const keepFile = join(dir, "Bundle", "special.mp4");
+    const keepNfo = join(dir, "Bundle", "special.nfo");
+    const extraFile = join(dir, "Bundle", "old_special.mp4");
+    await Deno.mkdir(join(dir, "Bundle"), { recursive: true });
+    await Deno.writeTextFile(keepFile, "video");
+    await Deno.writeTextFile(keepNfo, "<movie/>");
+    await Deno.writeTextFile(extraFile, "old");
+
+    const items: DownloadInfo[] = [{
+      name: "Special",
+      bundle: "Bundle",
+      gameKey: "k1",
+      machineName: "special",
+      fileName: "special.mp4",
+      downloadPath: join(dir, "Bundle"),
+      filePath: keepFile,
+      url: new URL("https://example.com/special.mp4"),
+      structName: "1080p",
+      date: new Date(),
+    }];
+    const options = {
+      downloadFolder: dir,
+      backupReplaced: true,
+    } as Options;
+    const totals = { removedFiles: 0, removedChecksums: 0 } as Totals;
+
+    await clean(items, {}, options, totals);
+    await deleteEmptyFolders(dir);
+
+    assert(await exists(keepFile));
+    assert(
+      await exists(keepNfo),
+      ".nfo sidecar should be protected by clean()",
+    );
+    assertEquals(await exists(extraFile), false);
+    assert(
+      await exists(join(dir, ".trash", "Bundle", "old_special.mp4")),
+      "Extra file should be moved into .trash/",
+    );
+    assertEquals(totals.removedFiles, 1);
+
+    const walked: string[] = [];
+    for await (const entry of walkExistingFiles(options)) {
+      walked.push(entry.path);
+    }
+    assertEquals(
+      walked.some((p) => p.includes(".trash")),
+      false,
+      "walkExistingFiles should ignore .trash/",
+    );
+  });
+});
+
+Deno.test("computeAndPrintDiff - reports new bundles, newly migrated bundles, new/changed downloads, and removals", async () => {
+  await withTempDir(async (dir) => {
+    const prevBundles = [
+      {
+        gamekey: "legacykey123",
+        created: "2013-01-01T00:00:00Z",
+        product: {
+          human_name: "Classic Bundle",
+          machine_name: "classic_bundle",
+        },
+        subproducts: [],
+      },
+    ] as unknown as Bundle[];
+    const currentBundles = [
+      {
+        gamekey: "11111111-1111-1111-1111-111111111111",
+        created: "2013-01-01T00:00:00Z",
+        product: {
+          human_name: "Classic Bundle",
+          machine_name: "classic_bundle",
+        },
+        subproducts: [],
+      },
+      {
+        gamekey: "22222222-2222-2222-2222-222222222222",
+        created: "2026-01-01T00:00:00Z",
+        product: { human_name: "Brand New Bundle", machine_name: "brand_new" },
+        subproducts: [],
+      },
+    ] as unknown as Bundle[];
+
+    const extraPath = join(dir, "stale.epub");
+    await Deno.writeTextFile(extraPath, "stale");
+
+    const filtered: DownloadInfo[] = [
+      {
+        name: "Book A",
+        bundle: "Brand New Bundle",
+        gameKey: "22222222-2222-2222-2222-222222222222",
+        machineName: "book_a",
+        fileName: "book_a.epub",
+        downloadPath: dir,
+        filePath: join(dir, "book_a.epub"),
+        url: new URL("https://example.com/book_a.epub"),
+        structName: "EPUB",
+        date: new Date("2026-01-01T00:00:00Z"),
+        sha1: "newhash",
+      },
+      {
+        name: "Book B",
+        bundle: "Classic Bundle",
+        gameKey: "11111111-1111-1111-1111-111111111111",
+        machineName: "book_b",
+        fileName: "book_b.epub",
+        downloadPath: dir,
+        filePath: join(dir, "book_b.epub"),
+        url: new URL("https://example.com/book_b.epub"),
+        structName: "EPUB",
+        date: new Date("2013-01-01T00:00:00Z"),
+        sha1: "updated_sha1",
+      },
+    ];
+    const checksums: Record<string, Checksums> = {
+      "book_b.epub": { sha1: "old_sha1" },
+    };
+
+    const report = await computeAndPrintDiff(
+      prevBundles,
+      currentBundles,
+      filtered,
+      checksums,
+      { downloadFolder: dir, json: false } as Options,
+    );
+
+    assertEquals(report.newlyMigratedBundles.length, 1);
+    assertEquals(report.newBundles.length, 1);
+    assertEquals(report.newDownloads.length, 1);
+    assertEquals(report.changedDownloads.length, 1);
+    assertEquals(report.removedFiles.length, 1);
+  });
+});
+
+Deno.test("pruneTrash - deletes files older than maxAgeDays and preserves recent files", async () => {
+  await withTempDir(async (dir) => {
+    const trashDir = join(dir, ".trash", "2020-01-01");
+    await Deno.mkdir(trashDir, { recursive: true });
+    const oldFile = join(trashDir, "old.epub");
+    const newFile = join(trashDir, "new.epub");
+    await Deno.writeTextFile(oldFile, "old");
+    await Deno.writeTextFile(newFile, "new");
+
+    const oldDate = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    await Deno.utime(oldFile, oldDate, oldDate);
+
+    const dryDeleted = await pruneTrash(dir, 30, true);
+    assertEquals(dryDeleted, 1);
+    assertEquals(await exists(oldFile), true);
+
+    const realDeleted = await pruneTrash(dir, 30, false);
+    assertEquals(realDeleted, 1);
+    assertEquals(await exists(oldFile), false);
+    assertEquals(await exists(newFile), true);
+  });
+});
+
+Deno.test("writeExternalLinkSidecars - creates .url sidecar files for external-link items", async () => {
+  await withTempDir(async (dir) => {
+    const bundles: Bundle[] = [
+      {
+        gamekey: "gk_ext_1",
+        created: "2026-01-01T00:00:00Z",
+        product: {
+          machine_name: "ext_bundle",
+          human_name: "External Bundle",
+          category: "bundle",
+          empty_tpkds: {},
+          post_purchase_text: "",
+        },
+        subproducts: [
+          {
+            machine_name: "ext_sub",
+            human_name: "External Course",
+            url: "",
+            downloads: [
+              {
+                platform: "ebook",
+                machine_name: "ext_dl",
+                download_struct: [
+                  {
+                    name: "Course Link",
+                    external_link: "https://example.com/course",
+                  },
+                ],
+              },
+            ],
+            payee: { human_name: "Maker", machine_name: "maker" },
+            icon: "",
+            custom_download_page_box_css: "",
+            custom_download_page_box_html: "",
+          },
+        ],
+        tpkd_dict: { all_tpks: [] },
+      } as unknown as Bundle,
+    ];
+
+    const created = await writeExternalLinkSidecars(bundles, {
+      downloadFolder: dir,
+      bundleFolders: true,
+      dryRun: false,
+    } as Options);
+
+    assertEquals(created, 1);
+    const sidecarPath = join(
+      dir,
+      "External Bundle",
+      "External Course (Course Link).url",
+    );
+    assertEquals(await exists(sidecarPath), true);
+    const content = await Deno.readTextFile(sidecarPath);
+    assert(content.includes("URL=https://example.com/course"));
+  });
 });

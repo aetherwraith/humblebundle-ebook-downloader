@@ -1,24 +1,39 @@
-import { DownloadInfo, Options } from "../types/general.ts";
-import { Bundle, DownloadStruct, SubProduct } from "../types/bundle.ts";
+import {
+  Bundle,
+  Download as BundleDownload,
+  SubProduct,
+} from "../types/bundle.ts";
 
 const MOCK_BUNDLE_COUNT = 100;
 const SUBPRODUCTS_PER_BUNDLE = 5;
 const DOWNLOADS_PER_SUBPRODUCT = 3;
+
+interface MockDownloadEntry {
+  fileName: string;
+  sha1: string;
+  md5: string;
+}
 
 // Generate mock data
 const bundles: Bundle[] = [];
 for (let i = 0; i < MOCK_BUNDLE_COUNT; i++) {
   const subproducts: SubProduct[] = [];
   for (let j = 0; j < SUBPRODUCTS_PER_BUNDLE; j++) {
-    const downloads: any[] = [];
+    const downloads: BundleDownload[] = [];
     for (let k = 0; k < DOWNLOADS_PER_SUBPRODUCT; k++) {
       downloads.push({
-        platform: "ebook",
+        desktop_app_only: false,
+        machine_name: `dl_${i}_${j}_${k}`,
+        options_dict: null,
+        download_identifier: null,
+        download_version_number: null,
+        platform: "ebook" as BundleDownload["platform"],
         download_struct: [{
-          url: { web: "http://example.com/file.epub" },
+          url: { web: "http://example.com/file.epub", bittorrent: "" },
           sha1: `sha${i}-${j}-${k}`,
           md5: `md5${i}-${j}-${k}`,
           name: "epub",
+          human_size: "1 KB",
           file_size: 1000,
         }],
       });
@@ -38,40 +53,22 @@ for (let i = 0; i < MOCK_BUNDLE_COUNT; i++) {
   } as unknown as Bundle);
 }
 
-const options: Options = {
-  platform: ["ebook"],
-  format: ["epub"],
-  dedup: true,
-  downloadFolder: "downloads",
-  // other required options mocked
-} as Options;
-
 console.log(`Benchmarking filterBundles with ${MOCK_BUNDLE_COUNT} bundles.`);
 
-// Simulate the heavy part of filterBundles: duplicate checking
-const generatedDownloads: DownloadInfo[] = []; // This grows
-// We'll simulate just the loop and duplicate check
-
 // OLD ALG SIMULATION
-// Ideally we would import `filterBundles` but we want to isolate the loop logic for clear comparison
-// or just run the actual function if we can.
-// Since `filterBundles` has side effects (logging, totals), let's simulate the core logic bottleneck.
-
 const startOld = performance.now();
-const downloadsOld: any[] = [];
+const downloadsOld: MockDownloadEntry[] = [];
 let checksOld = 0;
 
 for (const b of bundles) {
   for (const sp of b.subproducts) {
-    for (const dl of sp.downloads) {
-      // ... creation logic ...
-      const mockDL = {
+    for (const _dl of sp.downloads) {
+      const mockDL: MockDownloadEntry = {
         fileName: `file_${b.gamekey}_${sp.machine_name}.epub`,
         sha1: "abc",
         md5: "def",
       };
 
-      // The bottleneck:
       const isDuplicate = downloadsOld.some((elem) =>
         elem.fileName === mockDL.fileName ||
         (elem.sha1 === mockDL.sha1 && elem.md5 === mockDL.md5)
@@ -88,20 +85,19 @@ const endOld = performance.now();
 console.log(
   `Old Logic Simulation: ${
     (endOld - startOld).toFixed(2)
-  }ms, ${downloadsOld.length} total items.`,
+  }ms, ${downloadsOld.length} total items (${checksOld} checks).`,
 );
 
 // NEW ALG SIMULATION
 const startNew = performance.now();
-const downloadsNew: any[] = [];
-// Use sets for fast lookup
+const downloadsNew: MockDownloadEntry[] = [];
 const seenFileNames = new Set<string>();
 const seenHashes = new Set<string>();
 
 for (const b of bundles) {
   for (const sp of b.subproducts) {
-    for (const dl of sp.downloads) {
-      const mockDL = {
+    for (const _dl of sp.downloads) {
+      const mockDL: MockDownloadEntry = {
         fileName: `file_${b.gamekey}_${sp.machine_name}.epub`,
         sha1: "abc",
         md5: "def",

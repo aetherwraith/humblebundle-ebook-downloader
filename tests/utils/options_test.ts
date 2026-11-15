@@ -31,7 +31,13 @@ Deno.test("isOptionValueEqual - handles primitives and arrays", () => {
 });
 
 Deno.test("isOptionExplicitlySet - detects camelCase, kebab-case, and aliases", () => {
-  const args = ["--download-folder", "/tmp/dl", "-t", "token123", "--parallel=8"];
+  const args = [
+    "--download-folder",
+    "/tmp/dl",
+    "-t",
+    "token123",
+    "--parallel=8",
+  ];
 
   assertEquals(isOptionExplicitlySet("downloadFolder", args), true);
   assertEquals(isOptionExplicitlySet("authToken", args), true);
@@ -193,4 +199,36 @@ Deno.test("applyConfigAndEnv - applies .humblerc.json and HUMBLE_* env vars whil
   assertEquals(options.opf, true);
   assertEquals(options.humanFileNames, true);
   assertEquals(options.covers, true);
+});
+
+Deno.test("applyConfigAndEnv - maps OPTION_SCHEMA boolean and number env vars", () => {
+  const options: Options = {
+    _: ["ebooks"],
+    downloadFolder: "/tmp/dl",
+    authToken: "",
+    dedup: true,
+    bundleFolders: true,
+    productFolders: true,
+    humanFileNames: false,
+    parallel: 5,
+    format: ["epub"],
+    platform: ["ebook"],
+    videoQuality: ["best"],
+  };
+
+  applyConfigAndEnv(options, [], {
+    HUMBLE_STRICT_CHECKSUMS: "true",
+    HUMBLE_TRASH_MAX_AGE: "45",
+  }, {});
+
+  assertEquals(options.strictChecksums, true);
+  assertEquals(options.trashMaxAge, 45);
+});
+
+Deno.test("generateShellCompletion - zsh includes short flags, --no- options, and value completions", () => {
+  const zsh = generateShellCompletion("zsh");
+  assertEquals(zsh.includes("{-d,--download-folder}"), true);
+  assertEquals(zsh.includes("--no-dedup["), true);
+  assertEquals(zsh.includes("{-f,--format}"), true);
+  assertEquals(zsh.includes("cleanuptrash"), true);
 });

@@ -1,27 +1,7 @@
-import { clean, walkExistingFiles } from "../utils/fileUtils.ts";
-import { DownloadInfo, Options, Totals } from "../types/general.ts";
-import { Checksums } from "../types/bundle.ts";
-import { resolve } from "@std/path";
+import { DownloadInfo } from "../types/general.ts";
 
-// Mock Deno.remove to avoid actual deletion during benchmark
-const originalRemove = Deno.remove;
-Deno.remove = () => Promise.resolve();
-
-// Mock walkExistingFiles to return a large number of files
 const MOCK_FILE_COUNT = 10000;
 const MOCK_DOWNLOAD_COUNT = 5000;
-
-async function* mockWalkExistingFiles(_options: Options) {
-  for (let i = 0; i < MOCK_FILE_COUNT; i++) {
-    yield {
-      path: resolve(`download/file${i}.epub`),
-      name: `file${i}.epub`,
-      isFile: true,
-      isDirectory: false,
-      isSymlink: false,
-    };
-  }
-}
 
 // Check if we can overwrite the export, otherwise we might need a different approach regarding modules.
 // Since we are importing, we can't easily mock internal functions of the module without a DI pattern or similar.

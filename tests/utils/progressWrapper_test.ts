@@ -1,7 +1,10 @@
 import { assert, assertEquals } from "@std/assert";
 import { cyan } from "@std/fmt/colors";
 import { stripAnsi } from "../../utils/generic.ts";
-import { MultiBarWrapper, SingleBarWrapper } from "../../utils/progressWrapper.ts";
+import {
+  MultiBarWrapper,
+  SingleBarWrapper,
+} from "../../utils/progressWrapper.ts";
 import { BandwidthLimiter } from "../../utils/streamProgress.ts";
 
 Deno.test("SingleBarWrapper - renderString produces formatted string with bytes", () => {

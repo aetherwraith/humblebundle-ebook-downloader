@@ -21,6 +21,7 @@ import {
   ensureDirCached,
   extractArchive,
   writeJsonFile,
+  writeNfoSidecar,
   writeOpfSidecar,
 } from "./fileUtils.ts";
 import { parseSize } from "./generic.ts";
@@ -124,7 +125,10 @@ export async function doDownload(
       (req.status === 403 || req.status === 401 || req.status === 404) &&
       options
     ) {
-      progressDebug(progress, `URL expired for ${download.fileName}, refreshing...`);
+      progressDebug(
+        progress,
+        `URL expired for ${download.fileName}, refreshing...`,
+      );
       download.url = download.webFilename && !download.entitlementId
         ? await getTroveURL(
           download.machineName,
@@ -210,9 +214,8 @@ export async function doDownload(
       download.fileName,
       options?.downloadFolder,
     );
-    const previousErrors =
-      (checksums[cacheKey]?.hashErrors ??
-        checksums[download.fileName]?.hashErrors) ?? 0;
+    const previousErrors = (checksums[cacheKey]?.hashErrors ??
+      checksums[download.fileName]?.hashErrors) ?? 0;
 
     hash.verifiedSize = stat.size;
     if ((download.sha1 || download.md5) && !isHashVerified(download, hash)) {
@@ -221,9 +224,24 @@ export async function doDownload(
       if (totals) {
         totals.hashErrors = (totals.hashErrors ?? 0) + 1;
       }
+      if (options?.strictChecksums) {
+        await Deno.remove(partPath).catch(() => {});
+        activePartFiles.delete(partPath);
+        throw new Error(
+          `Strict checksum mismatch for ${download.fileName} (calculated sha1=${
+            hash.sha1 ?? "none"
+          } md5=${hash.md5 ?? "none"}, expected sha1=${
+            download.sha1 ?? "none"
+          } md5=${download.md5 ?? "none"})`,
+        );
+      }
       progressDebug(
         progress,
-        `Warning: API checksum mismatch #${errorCount} for ${download.fileName} (calculated sha1=${hash.sha1 ?? "none"} md5=${hash.md5 ?? "none"}, API expected sha1=${download.sha1 ?? "none"} md5=${download.md5 ?? "none"}). Keeping downloaded file.`,
+        `Warning: API checksum mismatch #${errorCount} for ${download.fileName} (calculated sha1=${
+          hash.sha1 ?? "none"
+        } md5=${hash.md5 ?? "none"}, API expected sha1=${
+          download.sha1 ?? "none"
+        } md5=${download.md5 ?? "none"}). Keeping downloaded file.`,
       );
     }
 
@@ -236,14 +254,12 @@ export async function doDownload(
       hash.verifiedMtime = stat.mtime.getTime();
     }
     checksums[cacheKey] = hash;
-    if (options?.covers) {
-      await downloadCoverArt(download, true, signal);
-    }
-    if (options?.opf) {
-      await writeOpfSidecar(download, true);
-    }
+    await applyPostDownloadSidecars(download, true, options, signal);
     if (options?.extract) {
-      await extractArchive(filePath, true, progress);
+      const extracted = await extractArchive(filePath, true, progress);
+      if (extracted && options?.extractClean) {
+        await Deno.remove(filePath).catch(() => {});
+      }
     }
   } catch (err) {
     try {
@@ -258,6 +274,130 @@ export async function doDownload(
     activePartFiles.delete(partPath);
     throw err;
   }
+}
+
+async function applyPostDownloadSidecars(
+  download: DownloadInfo,
+  overwrite: boolean,
+  options?: Options,
+  signal?: AbortSignal,
+): Promise<void> {
+  const tasks: Promise<unknown>[] = [];
+  if (options?.covers) {
+    tasks.push(downloadCoverArt(download, overwrite, signal).catch(() => {}));
+  }
+  if (options?.opf) {
+    tasks.push(writeOpfSidecar(download, overwrite).catch(() => {}));
+  }
+  if (options?.nfo) {
+    tasks.push(writeNfoSidecar(download, overwrite).catch(() => {}));
+  }
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+  }
+}
+
+/**
+ * Creates a debounced periodic checkpoint flusher for `checksums.json`.
+ */
+export function createChecksumFlusher(
+  options: Options | undefined,
+  checksums: Record<string, Checksums>,
+  batchSize = 20,
+): () => Promise<void> {
+  let pendingCacheUpdates = 0;
+  let flushInFlight = false;
+  return async () => {
+    pendingCacheUpdates++;
+    if (
+      options?.downloadFolder &&
+      !options.dryRun &&
+      pendingCacheUpdates >= batchSize &&
+      !flushInFlight
+    ) {
+      pendingCacheUpdates = 0;
+      flushInFlight = true;
+      try {
+        await writeJsonFile(options.downloadFolder, cacheFileName, checksums);
+      } catch {
+        // Ignore transient checkpoint errors
+      } finally {
+        flushInFlight = false;
+      }
+    }
+  };
+}
+
+interface EnqueueDownloadParams {
+  download: DownloadInfo;
+  progress: MultiBarWrapper;
+  checksums: Record<string, Checksums>;
+  queues: Queues;
+  totals: Totals;
+  progressBar: { increment: () => void };
+  signal?: AbortSignal;
+  options?: Options;
+  actionLabel?: string;
+  onSuccess?: () => Promise<void> | void;
+}
+
+function enqueueDownloadWithRetry({
+  download,
+  progress,
+  checksums,
+  queues,
+  totals,
+  progressBar,
+  signal,
+  options,
+  actionLabel = "download",
+  onSuccess,
+}: EnqueueDownloadParams): void {
+  queues.downloads.add(async () => {
+    if (signal?.aborted) return;
+
+    try {
+      await retry(
+        async () =>
+          await doDownload(
+            download,
+            progress,
+            checksums,
+            signal,
+            options,
+            totals,
+          ).catch((err) => {
+            progressDebug(
+              progress,
+              `Error ${actionLabel}ing `,
+              download.fileName,
+            );
+            progressDebug(progress, err.message);
+            if (err instanceof RetryError) {
+              progressDebug(progress, "Retry error :", err.message);
+              progressDebug(progress, "Error cause :", err.cause);
+            }
+            throw err;
+          }),
+        retryOptions,
+      );
+      totals.doneDownloads++;
+      if (onSuccess) await onSuccess();
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      progress.log(
+        `Failed to ${actionLabel} ${download.fileName} after ${retryOptions.maxAttempts} attempts: ${errorMsg}`,
+      );
+      totals.failedDownloads = totals.failedDownloads ?? [];
+      totals.failedDownloads.push({
+        fileName: download.fileName,
+        bundle: download.bundle,
+        error: errorMsg,
+      });
+    } finally {
+      progressBar.increment();
+    }
+  });
 }
 
 /**
@@ -285,31 +425,12 @@ export function downloadItems(
   const downloadProgress = progress.create(filteredBundles.length, 0, {
     file: "Download Queue",
   });
+
   const hashIndex = buildChecksumHashIndex(checksums);
   const activeTargetPaths = new Set(
     filteredBundles.map((d) => resolve(d.filePath).toLowerCase()),
   );
-  let pendingCacheUpdates = 0;
-  let flushInFlight = false;
-  const maybeFlushChecksums = async () => {
-    pendingCacheUpdates++;
-    if (
-      options?.downloadFolder &&
-      !options.dryRun &&
-      pendingCacheUpdates >= 20 &&
-      !flushInFlight
-    ) {
-      pendingCacheUpdates = 0;
-      flushInFlight = true;
-      try {
-        await writeJsonFile(options.downloadFolder, cacheFileName, checksums);
-      } catch {
-        // Ignore transient checkpoint errors
-      } finally {
-        flushInFlight = false;
-      }
-    }
-  };
+  const maybeFlushChecksums = createChecksumFlusher(options, checksums);
 
   for (const download of filteredBundles) {
     queues.fileCheck.add(async () => {
@@ -368,62 +489,36 @@ export function downloadItems(
           downloadProgress.increment();
           return;
         }
-        queues.downloads.add(async () => {
-          if (signal?.aborted) return;
-
-          try {
-            await retry(
-              async () =>
-                await doDownload(
-                  download,
-                  progress,
-                  checksums,
-                  signal,
-                  options,
-                  totals,
-                ).catch((err) => {
-                  progressDebug(progress, "Error downloading ", download.fileName);
-                  progressDebug(progress, err.message);
-                  if (err instanceof RetryError) {
-                    progressDebug(progress, "Retry error :", err.message);
-                    progressDebug(progress, "Error cause :", err.cause);
-                  }
-                  throw err;
-                }),
-              retryOptions,
-            );
+        enqueueDownloadWithRetry({
+          download,
+          progress,
+          checksums,
+          queues,
+          totals,
+          progressBar: downloadProgress,
+          signal,
+          options,
+          actionLabel: "download",
+          onSuccess: async () => {
             addChecksumToHashIndex(hashIndex, cacheKey, checksums[cacheKey]);
-            totals.doneDownloads++;
             await maybeFlushChecksums();
-          } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            progress.log(
-              `Failed to download ${download.fileName} after ${retryOptions.maxAttempts} attempts: ${errorMsg}`,
-            );
-            if (!totals.failedDownloads) {
-              totals.failedDownloads = [];
-            }
-            totals.failedDownloads.push({
-              fileName: download.fileName,
-              bundle: download.bundle,
-              error: errorMsg,
-            });
-          } finally {
-            downloadProgress.increment();
-          }
+          },
         });
       } else {
         if (!options?.dryRun) {
-          if (options?.covers) {
-            await downloadCoverArt(download, false, signal).catch(() => {});
-          }
-          if (options?.opf) {
-            await writeOpfSidecar(download, false).catch(() => {});
-          }
+          await applyPostDownloadSidecars(download, false, options, signal);
           if (options?.extract) {
-            await extractArchive(download.filePath, false, progress).catch(
-              () => {},
-            );
+            queues.downloads.add(async () => {
+              if (signal?.aborted) return;
+              const extracted = await extractArchive(
+                download.filePath,
+                false,
+                progress,
+              ).catch(() => false);
+              if (extracted && options?.extractClean) {
+                await Deno.remove(download.filePath).catch(() => {});
+              }
+            });
           }
         }
         totals.doneDownloads++;
@@ -454,6 +549,8 @@ export function verifyItems(
     file: repair ? "Repair Queue" : "Verify Queue",
   });
 
+  const maybeFlushChecksums = createChecksumFlusher(options, checksums);
+
   const enqueueRepairDownload = (download: DownloadInfo, reason: string) => {
     totals.downloads++;
     if (options?.dryRun) {
@@ -468,36 +565,17 @@ export function verifyItems(
       progress,
       `Queueing repair download for ${download.fileName} (${reason})`,
     );
-    queues.downloads.add(async () => {
-      if (signal?.aborted) return;
-      try {
-        await retry(
-          async () =>
-            await doDownload(
-              download,
-              progress,
-              checksums,
-              signal,
-              options,
-              totals,
-            ),
-          retryOptions,
-        );
-        totals.doneDownloads++;
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        progress.log(
-          `Failed to repair ${download.fileName} after ${retryOptions.maxAttempts} attempts: ${errorMsg}`,
-        );
-        totals.failedDownloads = totals.failedDownloads ?? [];
-        totals.failedDownloads.push({
-          fileName: download.fileName,
-          bundle: download.bundle,
-          error: errorMsg,
-        });
-      } finally {
-        verifyProgress.increment();
-      }
+    enqueueDownloadWithRetry({
+      download,
+      progress,
+      checksums,
+      queues,
+      totals,
+      progressBar: verifyProgress,
+      signal,
+      options,
+      actionLabel: "repair",
+      onSuccess: maybeFlushChecksums,
     });
   };
 
@@ -548,13 +626,16 @@ export function verifyItems(
         verifiedSize: stat.size,
         ...(stat.mtime ? { verifiedMtime: stat.mtime.getTime() } : {}),
       };
+      await maybeFlushChecksums();
 
       if (hasExpectedHash && !isHashVerified(download, diskHash)) {
         totals.hashErrors = (totals.hashErrors ?? 0) + 1;
         checksums[cacheKey].hashErrors = (existing?.hashErrors ?? 0) + 1;
         progressDebug(
           progress,
-          `Hash mismatch for ${download.fileName}: disk sha1=${diskHash.sha1 ?? "none"} md5=${diskHash.md5 ?? "none"}`,
+          `Hash mismatch for ${download.fileName}: disk sha1=${
+            diskHash.sha1 ?? "none"
+          } md5=${diskHash.md5 ?? "none"}`,
         );
         if (repair) {
           enqueueRepairDownload(download, "checksum mismatch");

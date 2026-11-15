@@ -1,7 +1,11 @@
 {
   "tasks": {
     "test": "deno test -A",
-    "check": "deno check index.ts tests/utils/*.ts"
+    "check": "deno check index.ts tests/utils/*.ts",
+    "lint": "deno lint",
+    "fmt": "deno fmt --check",
+    "ci": "deno task fmt && deno task check && deno task lint && deno task test",
+    "build": "deno compile -A -o humble-dl index.ts"
   },
   "imports": {
     "@henrygd/queue": "jsr:@henrygd/queue@^1.2.0",
@@ -15,5 +19,5 @@
     "@std/fs": "jsr:@std/fs@^1.0.24",
     "@std/path": "jsr:@std/path@^1.1.6"
   },
-  "version": "4.0.0"
+  "version": "4.1.0"
 }

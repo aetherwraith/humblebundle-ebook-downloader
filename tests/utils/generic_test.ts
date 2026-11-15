@@ -20,7 +20,10 @@ import {
 
 Deno.test("sanitizeFilename - strips illegal, control, and reserved characters", () => {
   assertEquals(sanitizeFilename("normal_file.epub"), "normal_file.epub");
-  assertEquals(sanitizeFilename('bad:file*name?"<>|\\/test.pdf'), "badfilenametest.pdf");
+  assertEquals(
+    sanitizeFilename('bad:file*name?"<>|\\/test.pdf'),
+    "badfilenametest.pdf",
+  );
   assertEquals(sanitizeFilename("trailing.dots... "), "trailing.dots");
   assertEquals(sanitizeFilename("CON"), "");
   assertEquals(sanitizeFilename(".."), "");
@@ -80,7 +83,10 @@ Deno.test("parseSize - parses human-readable byte sizes", () => {
 
 Deno.test("matchesFilter - matches substring and regex case-insensitively", () => {
   assertEquals(matchesFilter(undefined, "Anything"), true);
-  assertEquals(matchesFilter("warhammer", "Humble Book Bundle: Warhammer 40K"), true);
+  assertEquals(
+    matchesFilter("warhammer", "Humble Book Bundle: Warhammer 40K"),
+    true,
+  );
   assertEquals(matchesFilter("^O'Reilly", "O'Reilly Python Bundle"), true);
   assertEquals(matchesFilter("nonexistent", "Book A", "Bundle B"), false);
 });
@@ -107,7 +113,10 @@ Deno.test("parseDateOption - parses date-only and ISO dates with start/end of da
 });
 
 Deno.test("stripAnsi - removes ANSI color escape codes", () => {
-  assertEquals(stripAnsi("\x1b[32m10\x1b[39m checksums loaded"), "10 checksums loaded");
+  assertEquals(
+    stripAnsi("\x1b[32m10\x1b[39m checksums loaded"),
+    "10 checksums loaded",
+  );
 });
 
 Deno.test("resolveOutputTemplate - expands placeholders and appends extension when missing", () => {
@@ -132,17 +141,45 @@ Deno.test("resolveOutputTemplate - expands placeholders and appends extension wh
   );
 });
 
+Deno.test("resolveOutputTemplate - supports month, day, date, gamekey, and platform tokens", () => {
+  const res = resolveOutputTemplate(
+    "/tmp/dl",
+    "{year}/{month}/{day}/{date}/{platform}/{gamekey}/{filename}",
+    {
+      bundle: "Test Bundle",
+      publisher: "Pub",
+      product: "Prod",
+      format: "EPUB",
+      ext: "epub",
+      year: "2026",
+      month: "03",
+      day: "09",
+      date: "2026-03-09",
+      gamekey: "gk_123",
+      platform: "ebook",
+      filename: "book.epub",
+    },
+  );
+  assertEquals(res.downloadPath, "/tmp/dl/2026/03/09/2026-03-09/ebook/gk_123");
+  assertEquals(res.fileName, "book.epub");
+});
+
 Deno.test("stripFileExtension & replaceFileExtension - handles compound and torrent extensions", () => {
   assertEquals(stripFileExtension("/dl/Infidel.hd.pdf"), "/dl/Infidel");
   assertEquals(stripFileExtension("/dl/game.tar.gz"), "/dl/game");
   assertEquals(stripFileExtension("/dl/dune.epub.torrent"), "/dl/dune");
-  assertEquals(replaceFileExtension("/dl/Infidel.hd.pdf", ".opf"), "/dl/Infidel.opf");
+  assertEquals(
+    replaceFileExtension("/dl/Infidel.hd.pdf", ".opf"),
+    "/dl/Infidel.opf",
+  );
   assertEquals(replaceFileExtension("/dl/game.tar.gz", "jpg"), "/dl/game.jpg");
 });
 
 Deno.test("normalizeBundleKey & parseBundleKeys - extracts gamekeys from raw strings and Humble URLs", () => {
   assertEquals(
-    normalizeBundleKey("https://www.humblebundle.com/downloads?key=aBcDeFgHiJkLmNoP"),
+    normalizeBundleKey(
+      "https://www.humblebundle.com/downloads?key=aBcDeFgHiJkLmNoP",
+    ),
     "aBcDeFgHiJkLmNoP",
   );
   assertEquals(normalizeBundleKey("  rawKey123  "), "rawKey123");

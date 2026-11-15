@@ -6,7 +6,7 @@ import {
   filterVideos,
 } from "../../utils/orders.ts";
 import { Bundle, Platform } from "../../types/bundle.ts";
-import { DownloadInfo, Options, Totals } from "../../types/general.ts";
+import { Options, Totals } from "../../types/general.ts";
 import { MultiBarWrapper } from "../../utils/progressWrapper.ts";
 
 function createMockBundle(
@@ -196,7 +196,9 @@ Deno.test("filterBundles - deduplication by hash with different filenames", () =
   assertEquals(result.length, 1);
   assertEquals(result[0].fileName, "file_v1.exe");
   assertEquals(
-    loggedMessages.some((m) => m.includes("Bundle1") && m.includes("file_v1.exe")),
+    loggedMessages.some((m) =>
+      m.includes("Bundle1") && m.includes("file_v1.exe")
+    ),
     true,
   );
 });
@@ -292,7 +294,7 @@ Deno.test("filterEbooks - checks format priority", () => {
     downloadFolder: "/tmp",
     dedup: true,
   } as Options;
-  let totals = { preFilteredDownloads: 0, filteredDownloads: 0 } as Totals;
+  const totals = { preFilteredDownloads: 0, filteredDownloads: 0 } as Totals;
 
   let result = filterEbooks(bundles, options, totals, mockProgress);
   assertEquals(result.length, 1);
@@ -355,7 +357,10 @@ Deno.test("createDownloadInfo - humanFileNames distinguishes pdf and pdf_hd so t
               },
               {
                 name: "PDF (HD)",
-                url: { web: "http://example.com/infidel_hd.pdf", bittorrent: "" },
+                url: {
+                  web: "http://example.com/infidel_hd.pdf",
+                  bittorrent: "",
+                },
               },
             ],
           },
@@ -532,17 +537,26 @@ Deno.test("filterBundles - videoQuality filters highest quality ('best') or '108
             structs: [
               {
                 name: "720p",
-                url: { web: "http://example.com/movie1_720p.mp4", bittorrent: "" },
+                url: {
+                  web: "http://example.com/movie1_720p.mp4",
+                  bittorrent: "",
+                },
                 file_size: 500_000_000,
               },
               {
                 name: "1080p",
-                url: { web: "http://example.com/movie1_1080p.mp4", bittorrent: "" },
+                url: {
+                  web: "http://example.com/movie1_1080p.mp4",
+                  bittorrent: "",
+                },
                 file_size: 1_200_000_000,
               },
               {
                 name: "4K",
-                url: { web: "http://example.com/movie1_2160p.mp4", bittorrent: "" },
+                url: {
+                  web: "http://example.com/movie1_2160p.mp4",
+                  bittorrent: "",
+                },
                 file_size: 3_500_000_000,
               },
             ],
@@ -558,12 +572,18 @@ Deno.test("filterBundles - videoQuality filters highest quality ('best') or '108
             structs: [
               {
                 name: "480p",
-                url: { web: "http://example.com/movie2_480p.mp4", bittorrent: "" },
+                url: {
+                  web: "http://example.com/movie2_480p.mp4",
+                  bittorrent: "",
+                },
                 file_size: 250_000_000,
               },
               {
                 name: "720p",
-                url: { web: "http://example.com/movie2_720p.mp4", bittorrent: "" },
+                url: {
+                  web: "http://example.com/movie2_720p.mp4",
+                  bittorrent: "",
+                },
                 file_size: 600_000_000,
               },
             ],
@@ -615,7 +635,12 @@ Deno.test("filterBundles - videoQuality filters highest quality ('best') or '108
     dedup: true,
   } as Options;
 
-  const worstResult = filterBundles(bundles, worstOptions, totals, mockProgress);
+  const worstResult = filterBundles(
+    bundles,
+    worstOptions,
+    totals,
+    mockProgress,
+  );
   assertEquals(
     worstResult.map((r) => r.fileName).sort(),
     ["movie1_720p.mp4", "movie2_480p.mp4"],
@@ -737,7 +762,10 @@ Deno.test("filterBundles & filterEbooks - supports --exclude, --since, and --bef
               structs: [
                 {
                   name: "EPUB",
-                  url: { web: "http://example.com/sample.epub", bittorrent: "" },
+                  url: {
+                    web: "http://example.com/sample.epub",
+                    bittorrent: "",
+                  },
                   uploaded_at: "2025-03-10T00:00:00Z",
                 },
               ],
@@ -859,11 +887,17 @@ Deno.test("filterEbooks & filterBundles - 'cb?' prioritizes cbz then cbr ahead o
             structs: [
               {
                 name: "PDF",
-                url: { web: "http://example.com/gannibal_vol7.pdf", bittorrent: "" },
+                url: {
+                  web: "http://example.com/gannibal_vol7.pdf",
+                  bittorrent: "",
+                },
               },
               {
                 name: "CBR",
-                url: { web: "http://example.com/gannibal_vol7.cbr", bittorrent: "" },
+                url: {
+                  web: "http://example.com/gannibal_vol7.cbr",
+                  bittorrent: "",
+                },
               },
             ],
           },
@@ -878,15 +912,24 @@ Deno.test("filterEbooks & filterBundles - 'cb?' prioritizes cbz then cbr ahead o
             structs: [
               {
                 name: "CBR",
-                url: { web: "http://example.com/huck_vol1.cbr", bittorrent: "" },
+                url: {
+                  web: "http://example.com/huck_vol1.cbr",
+                  bittorrent: "",
+                },
               },
               {
                 name: "CBZ",
-                url: { web: "http://example.com/huck_vol1.cbz", bittorrent: "" },
+                url: {
+                  web: "http://example.com/huck_vol1.cbz",
+                  bittorrent: "",
+                },
               },
               {
                 name: "PDF",
-                url: { web: "http://example.com/huck_vol1.pdf", bittorrent: "" },
+                url: {
+                  web: "http://example.com/huck_vol1.pdf",
+                  bittorrent: "",
+                },
               },
             ],
           },
@@ -942,7 +985,10 @@ Deno.test("filterAudio & filterVideos - prioritizes audio codecs, comedy special
               },
               {
                 name: "ZIP",
-                url: { web: "http://example.com/kizu-flac.zip", bittorrent: "" },
+                url: {
+                  web: "http://example.com/kizu-flac.zip",
+                  bittorrent: "",
+                },
               },
             ],
           },
@@ -958,17 +1004,26 @@ Deno.test("filterAudio & filterVideos - prioritizes audio codecs, comedy special
               {
                 name: "MP4",
                 file_size: 400_000_000,
-                url: { web: "http://example.com/DougStanhope720.mp4", bittorrent: "" },
+                url: {
+                  web: "http://example.com/DougStanhope720.mp4",
+                  bittorrent: "",
+                },
               },
               {
                 name: "MP4",
                 file_size: 900_000_000,
-                url: { web: "http://example.com/DougStanhope1080.mp4", bittorrent: "" },
+                url: {
+                  web: "http://example.com/DougStanhope1080.mp4",
+                  bittorrent: "",
+                },
               },
               {
                 name: "ZIP",
                 file_size: 50_000,
-                url: { web: "http://example.com/Doug_Stanhope_Subtitles.zip", bittorrent: "" },
+                url: {
+                  web: "http://example.com/Doug_Stanhope_Subtitles.zip",
+                  bittorrent: "",
+                },
               },
             ],
           },
@@ -1003,17 +1058,26 @@ Deno.test("filterAudio & filterVideos - prioritizes audio codecs, comedy special
               {
                 name: "ZIP",
                 file_size: 3_500_000_000,
-                url: { web: "http://example.com/course_video_part1.zip", bittorrent: "" },
+                url: {
+                  web: "http://example.com/course_video_part1.zip",
+                  bittorrent: "",
+                },
               },
               {
                 name: "ZIP",
                 file_size: 3_200_000_000,
-                url: { web: "http://example.com/course_video_part2.zip", bittorrent: "" },
+                url: {
+                  web: "http://example.com/course_video_part2.zip",
+                  bittorrent: "",
+                },
               },
               {
                 name: "ZIP",
                 file_size: 2_000_000,
-                url: { web: "http://example.com/course_video_supplement.zip", bittorrent: "" },
+                url: {
+                  web: "http://example.com/course_video_supplement.zip",
+                  bittorrent: "",
+                },
               },
             ],
           },
@@ -1036,7 +1100,11 @@ Deno.test("filterAudio & filterVideos - prioritizes audio codecs, comedy special
 
   const audioMp3 = filterAudio(
     bundles,
-    { downloadFolder: "/tmp", dedup: true, audioFormat: ["mp3", "flac"] } as Options,
+    {
+      downloadFolder: "/tmp",
+      dedup: true,
+      audioFormat: ["mp3", "flac"],
+    } as Options,
     totals,
     mockProgress,
   );

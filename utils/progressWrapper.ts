@@ -27,7 +27,8 @@ export class MultiBarWrapper {
   private lastLineCount = 0;
   private lastRender = 0;
   private renderTimeout: ReturnType<typeof setTimeout> | undefined;
-  private renderPromise: Promise<void> = Promise.resolve();
+  private readonly isTerminal = Deno.stdout.isTerminal();
+  private summaryText?: string;
   private verbose = false;
   private quietTerminal = false;
   private logFilePath?: string;
@@ -161,18 +162,23 @@ export class MultiBarWrapper {
     }
   }
 
+  setSummary(text?: string) {
+    this.summaryText = text;
+    this.render();
+  }
+
+  private printTerminalLine(joined: string) {
+    this.clearBars();
+    this.originalConsole.log(joined);
+    this.lastLineCount = 0;
+    this.render(true);
+  }
+
   log(...messages: unknown[]) {
     const joined = messages.join(" ");
     this.writeToFile("INFO", joined);
     if (this.quietTerminal) return;
-    // Clear current bars
-    this.clearBars();
-    // Log message
-    this.originalConsole.log(joined);
-    // Reset line count since we are now at a "fresh" line
-    this.lastLineCount = 0;
-    // Re-render
-    this.render(true);
+    this.printTerminalLine(joined);
   }
 
   /**
@@ -183,10 +189,7 @@ export class MultiBarWrapper {
     const joined = messages.join(" ");
     this.writeToFile("DEBUG", joined);
     if (this.verbose && !this.quietTerminal) {
-      this.clearBars();
-      this.originalConsole.log(joined);
-      this.lastLineCount = 0;
-      this.render(true);
+      this.printTerminalLine(joined);
     }
   }
 
@@ -209,7 +212,7 @@ export class MultiBarWrapper {
   }
 
   private clearBars() {
-    if (this.lastLineCount > 0 && Deno.stdout.isTerminal()) {
+    if (this.lastLineCount > 0 && this.isTerminal) {
       let output = MOVE_UP(this.lastLineCount);
       for (let i = 0; i < this.lastLineCount; i++) {
         output += `${CLEAR_LINE}\n`;
@@ -219,14 +222,15 @@ export class MultiBarWrapper {
     }
   }
 
-  async render(force = false) {
+  render(force = false) {
     const now = Date.now();
-    if (!force && now - this.lastRender < 100) {
+    const elapsed = now - this.lastRender;
+    if (!force && elapsed < 100) {
       if (!this.renderTimeout) {
         this.renderTimeout = setTimeout(() => {
           this.renderTimeout = undefined;
           this.render();
-        }, 100);
+        }, Math.max(1, 100 - elapsed));
       }
       return;
     }
@@ -237,18 +241,11 @@ export class MultiBarWrapper {
     }
 
     this.lastRender = now;
-
-    // Serialized render
-    this.renderPromise = this.renderPromise.then(async () => {
-      this.doRender();
-      await Promise.resolve();
-    });
-
-    await this.renderPromise;
+    this.doRender();
   }
 
   private doRender() {
-    if (this.quietTerminal || !Deno.stdout.isTerminal()) {
+    if (this.quietTerminal || !this.isTerminal) {
       return;
     }
 
@@ -273,6 +270,9 @@ export class MultiBarWrapper {
 
     for (const bar of this.bars) {
       lines.push(bar.renderString(columns));
+    }
+    if (this.summaryText) {
+      lines.push(this.summaryText.slice(0, Math.max(20, columns - 1)));
     }
 
     // Print new lines
@@ -371,7 +371,8 @@ export class SingleBarWrapper {
   // Renamed to renderString for manual rendering
   renderString(width: number): string {
     const now = Date.now();
-    const elapsedSeconds = (now - this.startTime) / 1000;
+    const rawElapsed = (now - this.startTime) / 1000;
+    const elapsedSeconds = Math.max(rawElapsed, 0.001);
 
     // Calculate rate and ETA
     let etaSeconds = 0;
@@ -382,7 +383,7 @@ export class SingleBarWrapper {
     }
 
     // Format Times
-    const elapsedStr = formatTime(elapsedSeconds);
+    const elapsedStr = formatTime(rawElapsed);
     const etaStr = (this.value > 0) ? formatTime(etaSeconds) : "--:--";
 
     const pct = this.total > 0 ? this.value / this.total : 0;
@@ -397,7 +398,13 @@ export class SingleBarWrapper {
       const formattedCompleted = formatFileSize(this.value.toString(), {}, "");
       const formattedTotal = formatFileSize(this.total.toString(), {}, "");
       const speed = elapsedSeconds > 0
-        ? `${formatFileSize(Math.round(this.value / elapsedSeconds).toString(), {}, "")}/s`
+        ? `${
+          formatFileSize(
+            Math.round(this.value / elapsedSeconds).toString(),
+            {},
+            "",
+          )
+        }/s`
         : "0 B/s";
       stats = `${formattedCompleted}/${formattedTotal} (${speed})`;
     } else {

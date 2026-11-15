@@ -165,13 +165,13 @@ export function selectAudioStructs(
   const validStructs = structs.filter((s) => Boolean(s.url?.web));
   if (validStructs.length === 0) return [];
 
-  const preferences = (audioFormats.length > 0
-    ? audioFormats
-    : DEFAULT_AUDIO_FORMATS).map(normalizeAudioFormat);
+  const preferences =
+    (audioFormats.length > 0 ? audioFormats : DEFAULT_AUDIO_FORMATS).map(
+      normalizeAudioFormat,
+    );
 
   if (!dedup) {
-    const isDefaultList =
-      preferences.length === DEFAULT_AUDIO_FORMATS.length &&
+    const isDefaultList = preferences.length === DEFAULT_AUDIO_FORMATS.length &&
       preferences.every((p, i) => p === DEFAULT_AUDIO_FORMATS[i]);
     if (isDefaultList) return validStructs;
   }
@@ -337,6 +337,19 @@ function deriveSiblingQualifier(
   return stem;
 }
 
+function getTargetExtension(
+  struct: DownloadStruct,
+  useTorrent: boolean,
+): string {
+  if (!struct.url) return "";
+  const webUrl = new URL(struct.url.web, "https://www.humblebundle.com/");
+  const baseExt = resolveUrlExtension(
+    decodeURIComponent(basename(webUrl.pathname)),
+    struct.name,
+  );
+  return (useTorrent ? `${baseExt}.torrent` : baseExt).toLowerCase();
+}
+
 function getSharedExtSet(
   structs: DownloadStruct[],
   useTorrent: boolean,
@@ -345,17 +358,7 @@ function getSharedExtSet(
   const counts = new Map<string, number>();
   for (const s of structs) {
     if (!s.url) continue;
-    const rawTarget = useTorrent && s.url.bittorrent
-      ? s.url.bittorrent
-      : s.url.web;
-    const webUrl = new URL(s.url.web, "https://www.humblebundle.com/");
-    const targetUrl = new URL(rawTarget, "https://www.humblebundle.com/");
-    const ext = (useTorrent
-      ? `${resolveUrlExtension(decodeURIComponent(basename(webUrl.pathname)), s.name)}.torrent`
-      : resolveUrlExtension(
-        decodeURIComponent(basename(targetUrl.pathname)),
-        s.name,
-      )).toLowerCase();
+    const ext = getTargetExtension(s, Boolean(useTorrent && s.url.bittorrent));
     counts.set(ext, (counts.get(ext) ?? 0) + 1);
   }
   const shared = new Set<string>();
@@ -388,17 +391,28 @@ function createDownloadInfo(
   const rawTargetUrl = useTorrent ? struct.url.bittorrent! : struct.url.web;
   const isAbsoluteUrl = /^https?:\/\//i.test(rawTargetUrl);
   const url = new URL(rawTargetUrl, "https://www.humblebundle.com/");
-  const webUrl = new URL(struct.url.web, "https://www.humblebundle.com/");
   const rawBaseName = decodeURIComponent(basename(url.pathname));
-  const resolvedExt = useTorrent
-    ? `${resolveUrlExtension(decodeURIComponent(basename(webUrl.pathname)), struct.name)}.torrent`
-    : resolveUrlExtension(rawBaseName, struct.name);
+  let resolvedExt: string;
+  if (useTorrent) {
+    const webUrl = new URL(struct.url.web, "https://www.humblebundle.com/");
+    resolvedExt = `${
+      resolveUrlExtension(
+        decodeURIComponent(basename(webUrl.pathname)),
+        struct.name,
+      )
+    }.torrent`;
+  } else {
+    resolvedExt = resolveUrlExtension(rawBaseName, struct.name);
+  }
 
   let fileName: string;
   let downloadPath: string;
   let filePath: string;
 
   if (options.outputTemplate) {
+    const isoDate = isNaN(date.getTime())
+      ? "0000-01-01"
+      : date.toISOString().split("T")[0];
     const resolved = resolveOutputTemplate(
       options.downloadFolder,
       options.outputTemplate,
@@ -406,9 +420,15 @@ function createDownloadInfo(
         bundle: bundle.product.human_name,
         publisher: subProduct.payee?.human_name,
         product: subProduct.human_name,
-        format: struct.name ? normalizeFormat(struct.name) : resolvedExt.replace(/^\./, ""),
+        format: struct.name
+          ? normalizeFormat(struct.name)
+          : resolvedExt.replace(/^\./, ""),
         ext: resolvedExt,
-        year: date.getUTCFullYear().toString(),
+        year: isoDate.slice(0, 4),
+        month: isoDate.slice(5, 7),
+        day: isoDate.slice(8, 10),
+        date: isoDate,
+        gamekey: bundle.gamekey,
         filename: rawBaseName,
       },
     );
@@ -580,22 +600,12 @@ export function filterBundles(
 
           let disambiguate = false;
           if (sharedExts && sharedExts.size > 0 && struct.url) {
-            const useTorrent = Boolean(options.torrent && struct.url.bittorrent);
-            const webUrl = new URL(
-              struct.url.web,
-              "https://www.humblebundle.com/",
+            const useTorrent = Boolean(
+              options.torrent && struct.url.bittorrent,
             );
-            const targetUrl = new URL(
-              useTorrent ? struct.url.bittorrent! : struct.url.web,
-              "https://www.humblebundle.com/",
+            disambiguate = sharedExts.has(
+              getTargetExtension(struct, useTorrent),
             );
-            const ext = (useTorrent
-              ? `${resolveUrlExtension(decodeURIComponent(basename(webUrl.pathname)), struct.name)}.torrent`
-              : resolveUrlExtension(
-                decodeURIComponent(basename(targetUrl.pathname)),
-                struct.name,
-              )).toLowerCase();
-            disambiguate = sharedExts.has(ext);
           }
 
           totals.preFilteredDownloads++;
@@ -614,7 +624,9 @@ export function filterBundles(
           // Check for duplicates using Maps
           let duplicateSource: DownloadInfo | undefined;
           if (options.dedup) {
-            duplicateSource = byFileName.get(downloadInfo.fileName.toLowerCase());
+            duplicateSource = byFileName.get(
+              downloadInfo.fileName.toLowerCase(),
+            );
             if (!duplicateSource && struct.sha1 && struct.md5) {
               const key =
                 `${struct.sha1.toLowerCase()}|${struct.md5.toLowerCase()}`;
@@ -679,123 +691,37 @@ export function filterEbooks(
   totals: Totals,
   progress: MultiBarWrapper,
 ): DownloadInfo[] {
-  progress.log(
-    `${yellow(bundles.length.toString())} bundles containing ebooks`,
-  );
-
-  const activeDownloads = new Set<DownloadInfo>();
-  const byMachineName = new Map<string, DownloadInfo>();
-  const byFilePath = new Map<string, DownloadInfo>();
   const formats = expandFormatPreferences(options.format ?? []);
-  const filters = compileItemFilters(options);
+  const formatRank = new Map<string, number>();
+  formats.forEach((f, idx) => formatRank.set(f, idx));
 
-  for (const bundle of bundles) {
-    if (!filters.matchesBundleKey(bundle.gamekey ?? "")) continue;
-    const bundleDate = new Date(bundle.created);
-    const sanitizedBundleName = options.bundleFolders
-      ? sanitizeFilename(bundle.product.human_name)
-      : "";
-    for (const subProduct of bundle.subproducts) {
-      if (
-        !filters.matchesText(
-          bundle.product.human_name,
-          subProduct.human_name,
-          subProduct.machine_name,
-        )
-      ) {
-        continue;
-      }
-      const sanitizedProductName = options.productFolders
-        ? sanitizeFilename(subProduct.human_name)
-        : "";
-      const filteredDownloads = subProduct.downloads.filter((elem) =>
-        elem.platform === Platform.Ebook
-      );
-      for (const format of formats) {
-        for (const download of filteredDownloads) {
-          for (const struct of download.download_struct) {
-            if (isMatchingEbookStruct(struct, format)) {
-              if (!filters.matchesSize(struct.file_size)) continue;
-              const uploadedAt = struct.uploaded_at
-                ? new Date(struct.uploaded_at)
-                : bundleDate;
-              const itemDate = uploadedAt > bundleDate ? uploadedAt : bundleDate;
-              if (!filters.matchesDate(itemDate)) continue;
-              totals.preFilteredDownloads++;
-
-              let existing: DownloadInfo | undefined;
-              if (options.dedup) {
-                existing = byMachineName.get(
-                  subProduct.machine_name.toLowerCase(),
-                );
-              }
-
-              const existingRank = existing
-                ? formats.indexOf(normalizeFormat(existing.structName))
-                : Infinity;
-              const currentRank = formats.indexOf(format);
-              const isHigherPriorityFormat = existing !== undefined &&
-                currentRank !== -1 &&
-                (existingRank === -1 || currentRank < existingRank);
-              const isNewerSameFormat = existing !== undefined &&
-                itemDate > existing.date &&
-                normalizeFormat(struct.name) ===
-                  normalizeFormat(existing.structName);
-
-              if (!existing || isHigherPriorityFormat || isNewerSameFormat) {
-                if (existing) {
-                  activeDownloads.delete(existing);
-                  byMachineName.delete(
-                    subProduct.machine_name.toLowerCase(),
-                  );
-                  byFilePath.delete(existing.filePath.toLowerCase());
-                }
-
-                const downloadInfo = createDownloadInfo(
-                  bundle,
-                  subProduct,
-                  struct,
-                  options,
-                  itemDate,
-                  sanitizedBundleName,
-                  sanitizedProductName,
-                  download.machine_name,
-                );
-
-                if (
-                  !byFilePath.has(downloadInfo.filePath.toLowerCase())
-                ) {
-                  activeDownloads.add(downloadInfo);
-                  if (options.dedup) {
-                    byMachineName.set(
-                      subProduct.machine_name.toLowerCase(),
-                      downloadInfo,
-                    );
-                  }
-                  byFilePath.set(
-                    downloadInfo.filePath.toLowerCase(),
-                    downloadInfo,
-                  );
-                } else {
-                  const duplicate = byFilePath.get(
-                    downloadInfo.filePath.toLowerCase(),
-                  );
-                  progressDebug(
-                    progress,
-                    `Potential duplicate purchase ${downloadInfo.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
-                  );
-                }
-              }
-            }
-          }
-        }
+  const getStructRank = (s: DownloadStruct): number => {
+    for (const fmt of formats) {
+      if (isMatchingEbookStruct(s, fmt)) {
+        return formatRank.get(fmt) ?? Infinity;
       }
     }
-  }
+    return Infinity;
+  };
 
-  const downloads = Array.from(activeDownloads);
-  totals.filteredDownloads = downloads.length;
-  return sortDownloads(downloads);
+  return filterMediaByPriority(bundles, options, totals, progress, {
+    mediaLabel: "ebooks",
+    isMatchingDownload: (d) => d.platform === Platform.Ebook,
+    selectStructs: (structs, dedup) => {
+      const matched: { struct: DownloadStruct; rank: number }[] = [];
+      for (const s of structs) {
+        const rank = getStructRank(s);
+        if (rank !== Infinity) matched.push({ struct: s, rank });
+      }
+      if (matched.length === 0) return [];
+      matched.sort((a, b) => a.rank - b.rank);
+      return dedup ? [matched[0].struct] : matched.map((m) => m.struct);
+    },
+    rankAndScore: (selectedStructs) => ({
+      rank: getStructRank(selectedStructs[0]),
+      score: 0,
+    }),
+  });
 }
 
 interface SubproductGroupEntry {
@@ -836,21 +762,7 @@ function buildSelectedDownloadInfos(
     let disambiguate = false;
     if (sharedExts && sharedExts.size > 0) {
       const useTorrent = Boolean(options.torrent && struct.url.bittorrent);
-      const webUrl = new URL(
-        struct.url.web,
-        "https://www.humblebundle.com/",
-      );
-      const targetUrl = new URL(
-        useTorrent ? struct.url.bittorrent! : struct.url.web,
-        "https://www.humblebundle.com/",
-      );
-      const ext = (useTorrent
-        ? `${resolveUrlExtension(decodeURIComponent(basename(webUrl.pathname)), struct.name)}.torrent`
-        : resolveUrlExtension(
-          decodeURIComponent(basename(targetUrl.pathname)),
-          struct.name,
-        )).toLowerCase();
-      disambiguate = sharedExts.has(ext);
+      disambiguate = sharedExts.has(getTargetExtension(struct, useTorrent));
     }
 
     totals.preFilteredDownloads++;
@@ -872,175 +784,54 @@ function buildSelectedDownloadInfos(
   return { items, maxDate };
 }
 
-/**
- * Filters and prioritizes soundtracks, audiobooks, and comedy audio albums
- * according to `options.audioFormat` (defaulting to lossless `flac` -> `alac` -> `wav` -> ... -> `mp3`).
- */
-export function filterAudio(
-  bundles: Bundle[],
-  options: Options,
-  totals: Totals,
-  progress: MultiBarWrapper,
-): DownloadInfo[] {
-  const audioBundles = bundles.filter((b) =>
-    b.subproducts.some((sp) =>
-      sp.downloads.some(
-        (d) => d.platform === Platform.Audio || isComedyAudioDownload(d),
-      )
-    )
-  );
-  progress.log(
-    `${yellow(audioBundles.length.toString())} bundles containing audio`,
-  );
-
-  const activeDownloads = new Set<DownloadInfo>();
-  const byMachineName = new Map<string, SubproductGroupEntry>();
-  const byFilePath = new Map<string, DownloadInfo>();
-  const audioPrefs = (options.audioFormat && options.audioFormat.length > 0
-    ? options.audioFormat
-    : DEFAULT_AUDIO_FORMATS).map(normalizeAudioFormat);
-  const filters = compileItemFilters(options);
-
-  for (const bundle of audioBundles) {
-    if (!filters.matchesBundleKey(bundle.gamekey ?? "")) continue;
-    const bundleDate = new Date(bundle.created);
-    const sanitizedBundleName = options.bundleFolders
-      ? sanitizeFilename(bundle.product.human_name)
-      : "";
-
-    for (const subProduct of bundle.subproducts) {
-      if (
-        !filters.matchesText(
-          bundle.product.human_name,
-          subProduct.human_name,
-          subProduct.machine_name,
-        )
-      ) {
-        continue;
-      }
-      const sanitizedProductName = options.productFolders
-        ? sanitizeFilename(subProduct.human_name)
-        : "";
-      const matchingDownloads = subProduct.downloads.filter(
-        (d) => d.platform === Platform.Audio || isComedyAudioDownload(d),
-      );
-
-      for (const download of matchingDownloads) {
-        const selectedStructs = selectAudioStructs(
-          download.download_struct,
-          audioPrefs,
-          options.dedup,
-        );
-        if (selectedStructs.length === 0) continue;
-
-        const { items, maxDate } = buildSelectedDownloadInfos(
-          bundle,
-          subProduct,
-          download,
-          selectedStructs,
-          bundleDate,
-          options,
-          filters,
-          sanitizedBundleName,
-          sanitizedProductName,
-          totals,
-        );
-        if (items.length === 0) continue;
-
-        // Compute best audio preference rank among selected structs
-        let rank = Infinity;
-        for (const s of selectedStructs) {
-          const det = detectAudioFormat(s.name, s.url?.web);
-          const idx = det ? audioPrefs.indexOf(det) : -1;
-          if (idx !== -1 && idx < rank) rank = idx;
-        }
-
-        const machineKey = subProduct.machine_name.toLowerCase();
-        const existing = options.dedup ? byMachineName.get(machineKey) : undefined;
-        const shouldUse = !existing ||
-          rank < existing.rank ||
-          (rank === existing.rank && maxDate > existing.date);
-
-        if (!shouldUse) continue;
-
-        if (existing) {
-          for (const oldItem of existing.items) {
-            activeDownloads.delete(oldItem);
-            byFilePath.delete(oldItem.filePath.toLowerCase());
-          }
-          byMachineName.delete(machineKey);
-        }
-
-        const keptItems: DownloadInfo[] = [];
-        for (const item of items) {
-          const pathKey = item.filePath.toLowerCase();
-          if (!byFilePath.has(pathKey)) {
-            activeDownloads.add(item);
-            byFilePath.set(pathKey, item);
-            keptItems.push(item);
-          } else {
-            const duplicate = byFilePath.get(pathKey);
-            progressDebug(
-              progress,
-              `Potential duplicate purchase ${item.fileName}, ${bundle.product.human_name}, ${duplicate?.bundle}, ${duplicate?.fileName}`,
-            );
-          }
-        }
-
-        if (options.dedup && keptItems.length > 0) {
-          byMachineName.set(machineKey, {
-            rank,
-            score: 0,
-            date: maxDate,
-            items: keptItems,
-          });
-        }
-      }
-    }
-  }
-
-  const downloads = Array.from(activeDownloads);
-  totals.filteredDownloads = downloads.length;
-  return sortDownloads(downloads);
+interface MediaFilterConfig {
+  mediaLabel: string;
+  isMatchingDownload: (download: BundleDownload) => boolean;
+  selectStructs: (
+    structs: DownloadStruct[],
+    dedup?: boolean,
+  ) => DownloadStruct[];
+  rankAndScore: (selectedStructs: DownloadStruct[]) => {
+    rank: number;
+    score: number;
+  };
 }
 
 /**
- * Filters and prioritizes videos (including video courses and stand-up comedy specials)
- * according to `options.videoQuality` (e.g. `["best"]` or `["1080p", "best"]`).
+ * Shared implementation for filtering and deduplicating audio/video downloads
+ * across bundles by preference rank, upload/purchase date, and quality score.
  */
-export function filterVideos(
+function filterMediaByPriority(
   bundles: Bundle[],
   options: Options,
   totals: Totals,
   progress: MultiBarWrapper,
+  config: MediaFilterConfig,
 ): DownloadInfo[] {
-  const videoBundles = bundles.filter((b) =>
-    b.subproducts.some((sp) =>
-      sp.downloads.some(
-        (d) => d.platform === Platform.Video || isComedyVideoDownload(d),
-      )
-    )
-  );
-  progress.log(
-    `${yellow(videoBundles.length.toString())} bundles containing videos`,
-  );
-
   const activeDownloads = new Set<DownloadInfo>();
   const byMachineName = new Map<string, SubproductGroupEntry>();
   const byFilePath = new Map<string, DownloadInfo>();
-  const videoPrefs = (options.videoQuality && options.videoQuality.length > 0
-    ? options.videoQuality
-    : ["best"]).map(normalizeVideoQuality);
   const filters = compileItemFilters(options);
+  let matchingBundleCount = 0;
 
-  for (const bundle of videoBundles) {
-    if (!filters.matchesBundleKey(bundle.gamekey ?? "")) continue;
+  for (const bundle of bundles) {
+    let bundleHasMatch = false;
+    const bundleMatchesKey = filters.matchesBundleKey(bundle.gamekey ?? "");
     const bundleDate = new Date(bundle.created);
     const sanitizedBundleName = options.bundleFolders
       ? sanitizeFilename(bundle.product.human_name)
       : "";
 
     for (const subProduct of bundle.subproducts) {
+      const matchingDownloads = subProduct.downloads.filter(
+        config.isMatchingDownload,
+      );
+      if (matchingDownloads.length === 0) continue;
+      if (!bundleHasMatch) {
+        bundleHasMatch = true;
+        matchingBundleCount++;
+      }
+      if (!bundleMatchesKey) continue;
       if (
         !filters.matchesText(
           bundle.product.human_name,
@@ -1053,14 +844,10 @@ export function filterVideos(
       const sanitizedProductName = options.productFolders
         ? sanitizeFilename(subProduct.human_name)
         : "";
-      const matchingDownloads = subProduct.downloads.filter(
-        (d) => d.platform === Platform.Video || isComedyVideoDownload(d),
-      );
 
       for (const download of matchingDownloads) {
-        const selectedStructs = selectVideoStructs(
+        const selectedStructs = config.selectStructs(
           download.download_struct,
-          videoPrefs,
           options.dedup,
         );
         if (selectedStructs.length === 0) continue;
@@ -1079,35 +866,11 @@ export function filterVideos(
         );
         if (items.length === 0) continue;
 
-        const primarySelected = selectedStructs.find(
-          (s) => !isVideoCompanionStruct(s),
-        ) ?? selectedStructs[0];
-        const detectedQ = detectVideoQuality(
-          `${primarySelected.name ?? ""} ${primarySelected.url?.web ?? ""}`,
-        );
-        let rank = Infinity;
-        for (let i = 0; i < videoPrefs.length; i++) {
-          const pref = videoPrefs[i];
-          if (
-            pref === "best" ||
-            pref === "worst" ||
-            detectedQ === pref ||
-            (pref === "hd" && (detectedQ === "1080p" || detectedQ === "720p")) ||
-            (pref === "sd" && (detectedQ === "480p" || detectedQ === "360p"))
-          ) {
-            rank = i;
-            break;
-          }
-        }
-        const rawScore = getVideoQualityScore(
-          primarySelected.file_size,
-          primarySelected.name,
-          primarySelected.url?.web,
-        );
-        const score = videoPrefs[rank] === "worst" ? -rawScore : rawScore;
-
+        const { rank, score } = config.rankAndScore(selectedStructs);
         const machineKey = subProduct.machine_name.toLowerCase();
-        const existing = options.dedup ? byMachineName.get(machineKey) : undefined;
+        const existing = options.dedup
+          ? byMachineName.get(machineKey)
+          : undefined;
         const shouldUse = !existing ||
           rank < existing.rank ||
           (rank === existing.rank && maxDate > existing.date) ||
@@ -1153,7 +916,98 @@ export function filterVideos(
     }
   }
 
+  progress.log(
+    `${
+      yellow(matchingBundleCount.toString())
+    } bundles containing ${config.mediaLabel}`,
+  );
   const downloads = Array.from(activeDownloads);
   totals.filteredDownloads = downloads.length;
   return sortDownloads(downloads);
+}
+
+/**
+ * Filters and prioritizes soundtracks, audiobooks, and comedy audio albums
+ * according to `options.audioFormat` (defaulting to lossless `flac` -> `alac` -> `wav` -> ... -> `mp3`).
+ */
+export function filterAudio(
+  bundles: Bundle[],
+  options: Options,
+  totals: Totals,
+  progress: MultiBarWrapper,
+): DownloadInfo[] {
+  const audioPrefs =
+    (options.audioFormat && options.audioFormat.length > 0
+      ? options.audioFormat
+      : DEFAULT_AUDIO_FORMATS).map(normalizeAudioFormat);
+
+  return filterMediaByPriority(bundles, options, totals, progress, {
+    mediaLabel: "audio",
+    isMatchingDownload: (d) =>
+      d.platform === Platform.Audio || isComedyAudioDownload(d),
+    selectStructs: (structs, dedup) =>
+      selectAudioStructs(structs, audioPrefs, dedup),
+    rankAndScore: (selectedStructs) => {
+      let rank = Infinity;
+      for (const s of selectedStructs) {
+        const det = detectAudioFormat(s.name, s.url?.web);
+        const idx = det ? audioPrefs.indexOf(det) : -1;
+        if (idx !== -1 && idx < rank) rank = idx;
+      }
+      return { rank, score: 0 };
+    },
+  });
+}
+
+/**
+ * Filters and prioritizes videos (including video courses and stand-up comedy specials)
+ * according to `options.videoQuality` (e.g. `["best"]` or `["1080p", "best"]`).
+ */
+export function filterVideos(
+  bundles: Bundle[],
+  options: Options,
+  totals: Totals,
+  progress: MultiBarWrapper,
+): DownloadInfo[] {
+  const videoPrefs =
+    (options.videoQuality && options.videoQuality.length > 0
+      ? options.videoQuality
+      : ["best"]).map(normalizeVideoQuality);
+
+  return filterMediaByPriority(bundles, options, totals, progress, {
+    mediaLabel: "videos",
+    isMatchingDownload: (d) =>
+      d.platform === Platform.Video || isComedyVideoDownload(d),
+    selectStructs: (structs, dedup) =>
+      selectVideoStructs(structs, videoPrefs, dedup),
+    rankAndScore: (selectedStructs) => {
+      const primarySelected = selectedStructs.find(
+        (s) => !isVideoCompanionStruct(s),
+      ) ?? selectedStructs[0];
+      const detectedQ = detectVideoQuality(
+        `${primarySelected.name ?? ""} ${primarySelected.url?.web ?? ""}`,
+      );
+      let rank = Infinity;
+      for (let i = 0; i < videoPrefs.length; i++) {
+        const pref = videoPrefs[i];
+        if (
+          pref === "best" ||
+          pref === "worst" ||
+          detectedQ === pref ||
+          (pref === "hd" && (detectedQ === "1080p" || detectedQ === "720p")) ||
+          (pref === "sd" && (detectedQ === "480p" || detectedQ === "360p"))
+        ) {
+          rank = i;
+          break;
+        }
+      }
+      const rawScore = getVideoQualityScore(
+        primarySelected.file_size,
+        primarySelected.name,
+        primarySelected.url?.web,
+      );
+      const score = videoPrefs[rank] === "worst" ? -rawScore : rawScore;
+      return { rank, score };
+    },
+  });
 }

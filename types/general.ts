@@ -53,7 +53,10 @@ export interface Options extends Record<string, unknown> {
   deep?: boolean;
   webhook?: string;
   opf?: boolean;
+  nfo?: boolean;
   covers?: boolean;
+  diff?: boolean;
+  backupReplaced?: boolean;
   torrent?: boolean;
   extract?: boolean;
   playlists?: boolean;
@@ -64,7 +67,15 @@ export interface Options extends Record<string, unknown> {
   authToken: string;
   downloadFolder: string;
   update?: boolean;
+  forceUpdate?: boolean;
   dryRun?: boolean;
+  yes?: boolean;
+  showConfig?: boolean;
+  strictChecksums?: boolean;
+  extractClean?: boolean;
+  trashMaxAge?: number;
+  prune?: boolean;
+  externalLinks?: boolean;
 }
 
 /**

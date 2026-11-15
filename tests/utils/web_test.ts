@@ -33,7 +33,10 @@ Deno.test("getRequestHeaders - correctly strips quotes and sets cookie & user-ag
   const headers = getRequestHeaders(options);
   assertEquals(headers.get("User-Agent"), userAgent);
   assertEquals(headers.get("Accept"), "application/json");
-  assertEquals(headers.get("Cookie"), '_simpleauth_sess="my_secret_session_token";');
+  assertEquals(
+    headers.get("Cookie"),
+    '_simpleauth_sess="my_secret_session_token";',
+  );
 });
 
 Deno.test("refreshDownloadUrl - throws when download cannot be matched", async () => {
@@ -200,7 +203,8 @@ Deno.test("convertVaultItemsToTroves & convertLibraryItemToBundle - maps Next.js
                     md5: "f66f6b1c9d2c7afd01eabd0cbe544498",
                     url: {
                       web: "gettingoveritwithbennettfoddy_linux.zip",
-                      bittorrent: "gettingoveritwithbennettfoddy_linux.zip.torrent",
+                      bittorrent:
+                        "gettingoveritwithbennettfoddy_linux.zip.torrent",
                     },
                   },
                 ],
@@ -294,10 +298,19 @@ Deno.test("fetchBundleDetails - requests RSC Flight stream (RSC: 1) and parses t
     assertEquals(receivedRscHeader, "1");
     assertEquals(receivedAccept, "text/x-component");
     assertEquals(bundle.gamekey, "group/test-uuid-99");
-    assertEquals(bundle.product.human_name, "Humble Tech Book Bundle by O'Reilly");
+    assertEquals(
+      bundle.product.human_name,
+      "Humble Tech Book Bundle by O'Reilly",
+    );
     assertEquals(bundle.subproducts.length, 1);
-    assertEquals(bundle.subproducts[0].human_name, "Designing Data-Intensive Applications");
-    assertEquals(bundle.subproducts[0].downloads[0].download_struct[0].sha1, "abc123def");
+    assertEquals(
+      bundle.subproducts[0].human_name,
+      "Designing Data-Intensive Applications",
+    );
+    assertEquals(
+      bundle.subproducts[0].downloads[0].download_struct[0].sha1,
+      "abc123def",
+    );
   } finally {
     ac.abort();
     await server.finished;

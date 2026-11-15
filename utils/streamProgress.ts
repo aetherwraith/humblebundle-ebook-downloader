@@ -22,15 +22,25 @@ export class BandwidthLimiter {
     return this.bytesPerSecond;
   }
 
-  async consume(bytes: number): Promise<void> {
-    if (this.bytesPerSecond <= 0 || bytes <= 0) return;
+  async consume(bytes: number, signal?: AbortSignal): Promise<void> {
+    if (this.bytesPerSecond <= 0 || bytes <= 0 || signal?.aborted) return;
     const now = Date.now();
     const durationMs = (bytes / this.bytesPerSecond) * 1000;
     const startAt = Math.max(now, this.nextAvailableMs);
     this.nextAvailableMs = startAt + durationMs;
     const waitMs = startAt - now;
     if (waitMs > 5) {
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, waitMs);
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
     }
   }
 }

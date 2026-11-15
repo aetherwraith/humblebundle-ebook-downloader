@@ -5,6 +5,7 @@ import {
   computeFileHash,
   getChecksumCacheKey,
   isHashVerified,
+  pruneMissingChecksums,
   tryHardlinkExistingFile,
   tryRelocateExistingFile,
   validateFileStructure,
@@ -166,7 +167,12 @@ Deno.test("checkSignatureMatch - returns false if file does not exist", async ()
   const progress = { log: () => {} } as unknown as MultiBarWrapper;
   const totals = { checksums: 0 } as Totals;
 
-  const result = await checkSignatureMatch(download, checksums, progress, totals);
+  const result = await checkSignatureMatch(
+    download,
+    checksums,
+    progress,
+    totals,
+  );
   assertEquals(result, false);
 });
 
@@ -201,7 +207,10 @@ Deno.test("checkSignatureMatch - tracks hashErrors and prevents re-downloading w
     assertEquals(firstCheck, false);
     assertEquals(totals.hashErrors, 1);
     assertEquals(checksums["mismatched_api_book.epub"]?.hashErrors, 1);
-    assertEquals(checksums["mismatched_api_book.epub"]?.verifiedSize, stat.size);
+    assertEquals(
+      checksums["mismatched_api_book.epub"]?.verifiedSize,
+      stat.size,
+    );
 
     // 2nd check (next run, or if same file on disk): sees hashErrors > 0 and file on disk still matches cached hash, size & mtime -> returns true (zero-read fast path!)
     const checksumsBeforeSecond = totals.checksums;
@@ -248,7 +257,10 @@ Deno.test("tryRelocateExistingFile - moves verified file and its sidecars from o
       sha1: "0a4d55a8d778e5022fab701977c5d840bbc486d0",
     } as DownloadInfo;
 
-    const progress = { log: () => {}, debug: () => {} } as unknown as MultiBarWrapper;
+    const progress = {
+      log: () => {},
+      debug: () => {},
+    } as unknown as MultiBarWrapper;
     const totals = { movedFiles: 0 } as Totals;
     const hashIndex = buildChecksumHashIndex(checksums);
 
@@ -309,7 +321,12 @@ Deno.test("checkSignatureMatch - invalidates cached hash when file size on disk 
     } as unknown as MultiBarWrapper;
     const totals = { checksums: 0, hashErrors: 0 } as Totals;
 
-    const result = await checkSignatureMatch(download, checksums, progress, totals);
+    const result = await checkSignatureMatch(
+      download,
+      checksums,
+      progress,
+      totals,
+    );
     assertEquals(result, false);
     assertEquals(totals.checksums > 0, true);
   } finally {
@@ -335,7 +352,10 @@ Deno.test("tryHardlinkExistingFile - hardlinks verified duplicate without deleti
       },
     };
     const hashIndex = buildChecksumHashIndex(checksums);
-    const progress = { log: () => {}, debug: () => {} } as unknown as MultiBarWrapper;
+    const progress = {
+      log: () => {},
+      debug: () => {},
+    } as unknown as MultiBarWrapper;
     const totals = { linkedFiles: 0 } as Totals;
 
     const download: DownloadInfo = {
@@ -398,6 +418,102 @@ Deno.test("validateFileStructure - validates PDF and ZIP/EPUB headers and traile
     assertEquals((await validateFileStructure(truncatedPdf)).valid, false);
     assertEquals((await validateFileStructure(validEpub)).valid, true);
     assertEquals((await validateFileStructure(truncatedEpub)).valid, false);
+
+    // ZIP Central Directory check: valid PK\x03\x04 + EOCD pointing to cdOffset=20, cdSize=20, but missing PK\x01\x02
+    const zipNoCd = `${tempDir}/no_cd.zip`;
+    const noCdBytes = new Uint8Array(64);
+    noCdBytes.set([0x50, 0x4b, 0x03, 0x04], 0);
+    noCdBytes.set([0x50, 0x4b, 0x05, 0x06], 40);
+    const noCdView = new DataView(noCdBytes.buffer);
+    noCdView.setUint32(40 + 12, 20, true);
+    noCdView.setUint32(40 + 16, 20, true);
+    await Deno.writeFile(zipNoCd, noCdBytes);
+    assertEquals((await validateFileStructure(zipNoCd)).valid, false);
+
+    // Valid ZIP with PK\x03\x04 + PK\x01\x02 + PK\x05\x06
+    const zipWithCd = `${tempDir}/with_cd.zip`;
+    const withCdBytes = new Uint8Array(64);
+    withCdBytes.set([0x50, 0x4b, 0x03, 0x04], 0);
+    withCdBytes.set([0x50, 0x4b, 0x01, 0x02], 20);
+    withCdBytes.set([0x50, 0x4b, 0x05, 0x06], 40);
+    const withCdView = new DataView(withCdBytes.buffer);
+    withCdView.setUint32(40 + 12, 20, true);
+    withCdView.setUint32(40 + 16, 20, true);
+    await Deno.writeFile(zipWithCd, withCdBytes);
+    assertEquals((await validateFileStructure(zipWithCd)).valid, true);
+  } finally {
+    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("pruneMissingChecksums - removes stale entries when files are missing", async () => {
+  const tempDir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${tempDir}/present.epub`, "ok");
+    const checksums: Record<string, Checksums> = {
+      "present.epub": { sha1: "aaa" },
+      "missing.epub": { sha1: "bbb" },
+    };
+
+    const dryCount = await pruneMissingChecksums(checksums, tempDir, true);
+    assertEquals(dryCount, 1);
+    assertEquals(Object.keys(checksums).length, 2);
+
+    const prunedCount = await pruneMissingChecksums(checksums, tempDir, false);
+    assertEquals(prunedCount, 1);
+    assertEquals(Object.keys(checksums), ["present.epub"]);
+  } finally {
+    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("validateFileStructure - validates audio and video magic headers", async () => {
+  const tempDir = await Deno.makeTempDir();
+  try {
+    const validFlac = `${tempDir}/track.flac`;
+    await Deno.writeFile(
+      validFlac,
+      new TextEncoder().encode("fLaC\x00\x00\x00\x22" + "0".repeat(16)),
+    );
+    const badFlac = `${tempDir}/bad.flac`;
+    await Deno.writeTextFile(badFlac, "<html>not a flac</html>");
+    assertEquals((await validateFileStructure(validFlac)).valid, true);
+    assertEquals((await validateFileStructure(badFlac)).valid, false);
+
+    const validMp4 = `${tempDir}/video.mp4`;
+    await Deno.writeFile(
+      validMp4,
+      new Uint8Array([
+        0,
+        0,
+        0,
+        20,
+        0x66,
+        0x74,
+        0x79,
+        0x70,
+        0x69,
+        0x73,
+        0x6f,
+        0x6d,
+        0,
+        0,
+        0,
+        0,
+      ]),
+    );
+    const badMp4 = `${tempDir}/bad.mp4`;
+    await Deno.writeTextFile(badMp4, "corrupt mp4 payload here");
+    assertEquals((await validateFileStructure(validMp4)).valid, true);
+    assertEquals((await validateFileStructure(badMp4)).valid, false);
+
+    const validOgg = `${tempDir}/audio.ogg`;
+    await Deno.writeTextFile(validOgg, "OggS" + "\x00".repeat(30));
+    assertEquals((await validateFileStructure(validOgg)).valid, true);
+
+    const validMp3 = `${tempDir}/song.mp3`;
+    await Deno.writeTextFile(validMp3, "ID3\x03\x00" + "\x00".repeat(16));
+    assertEquals((await validateFileStructure(validMp3)).valid, true);
   } finally {
     await Deno.remove(tempDir, { recursive: true }).catch(() => {});
   }
