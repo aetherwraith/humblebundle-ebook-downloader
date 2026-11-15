@@ -276,6 +276,7 @@ async function main(): Promise<void> {
         checksums,
         options.downloadFolder,
         Boolean(options.dryRun),
+        progress,
       );
       totals.removedChecksums += pruned;
       progress.log(

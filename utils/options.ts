@@ -20,6 +20,7 @@ import {
   SUPPORTED_AUDIO_FORMATS,
   SUPPORTED_FORMATS,
   SUPPORTED_VIDEO_QUALITIES,
+  version,
 } from "./constants.ts";
 import { readJsonFile, writeJsonFile } from "./fileUtils.ts";
 
@@ -127,6 +128,12 @@ export async function checkOptions(options: Options): Promise<void> {
   // Check for help flag
   if (options.help || options.h) {
     usage();
+    Deno.exit(0);
+  }
+
+  // Check for version flag
+  if (options.version) {
+    console.log(options.json ? JSON.stringify({ version }) : version);
     Deno.exit(0);
   }
 

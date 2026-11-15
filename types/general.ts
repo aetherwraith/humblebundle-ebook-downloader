@@ -71,6 +71,7 @@ export interface Options extends Record<string, unknown> {
   dryRun?: boolean;
   yes?: boolean;
   showConfig?: boolean;
+  version?: boolean;
   strictChecksums?: boolean;
   extractClean?: boolean;
   trashMaxAge?: number;

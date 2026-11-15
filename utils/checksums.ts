@@ -631,6 +631,7 @@ export async function pruneMissingChecksums(
   checksums: Record<string, Checksums>,
   downloadFolder: string,
   dryRun = false,
+  progress?: MultiBarWrapper,
 ): Promise<number> {
   const resolvedFolder = resolveDownloadFolderFast(downloadFolder);
   const keys = Object.keys(checksums);
@@ -651,7 +652,11 @@ export async function pruneMissingChecksums(
     for (let j = 0; j < batch.length; j++) {
       if (!existsList[j]) {
         pruned++;
-        if (!dryRun) {
+        if (dryRun) {
+          progress?.log(
+            `[Dry Run] Would prune stale checksum entry: ${batch[j]}`,
+          );
+        } else {
           delete checksums[batch[j]];
         }
       }

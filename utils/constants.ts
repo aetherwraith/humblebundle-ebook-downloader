@@ -186,6 +186,13 @@ export const OPTION_SCHEMA: Record<string, OptionSchemaEntry> = {
     description:
       "Print the effective merged configuration (with authToken redacted) and exit",
   },
+  version: {
+    type: "boolean",
+    default: false,
+    alias: "V",
+    noSave: true,
+    description: "Print the application version and exit",
+  },
   diff: {
     type: "boolean",
     default: false,
