@@ -109,7 +109,7 @@ export function applyConfigAndEnv(
         .filter(Boolean);
     } else if (schema.type === "number") {
       const num = Number(rawVal);
-      if (!isNaN(num) && num > 0) {
+      if (!isNaN(num) && num >= 0) {
         options[optKey] = num;
       }
     }
@@ -144,10 +144,26 @@ export async function checkOptions(options: Options): Promise<void> {
     return;
   }
 
-  // Load .humblerc.json from current working directory if present
+  // Load .humblerc.json from current working directory or XDG config dir
   let rcConfig: Partial<Options> = {};
   if (await exists(".humblerc.json")) {
     rcConfig = await readJsonFile<Partial<Options>>(".", ".humblerc.json");
+  } else {
+    try {
+      const xdgHome = Deno.env.get("XDG_CONFIG_HOME") ||
+        (Deno.env.get("HOME") ? resolve(Deno.env.get("HOME")!, ".config") : "");
+      if (xdgHome) {
+        const globalCfgDir = resolve(xdgHome, "humblebundle-ebook-downloader");
+        if (await exists(resolve(globalCfgDir, "config.json"))) {
+          rcConfig = await readJsonFile<Partial<Options>>(
+            globalCfgDir,
+            "config.json",
+          );
+        }
+      }
+    } catch {
+      // Ignore if --allow-env is not granted
+    }
   }
   let envObj: Record<string, string | undefined> = {};
   try {
@@ -165,9 +181,18 @@ export async function checkOptions(options: Options): Promise<void> {
   }
 
   // Auto-detect authentication cookie file if token is not provided
-  if (!options.authToken && (await exists("cookie.txt"))) {
-    const cookieContent = await Deno.readTextFile("cookie.txt");
-    options.authToken = parseCookieInput(cookieContent);
+  if (!options.authToken) {
+    const cookieCandidates = ["cookie.txt"];
+    if (options.downloadFolder) {
+      cookieCandidates.push(resolve(options.downloadFolder, "cookie.txt"));
+    }
+    for (const candidate of cookieCandidates) {
+      if (await exists(candidate)) {
+        const cookieContent = await Deno.readTextFile(candidate);
+        options.authToken = parseCookieInput(cookieContent);
+        if (options.authToken) break;
+      }
+    }
   }
 
   validateInitialOptions(options);
@@ -335,8 +360,11 @@ function processOptions(
         checkArrayOption(options[key] as string[], SUPPORTED_AUDIO_FORMATS);
         break;
       case "videoQuality":
+        options[key] = ((options[key] as string[] | undefined) ?? []).map((q) =>
+          q.toLowerCase()
+        );
         checkArrayOption(
-          (options[key] as string[]).map((q) => q.toLowerCase()),
+          options[key] as string[],
           SUPPORTED_VIDEO_QUALITIES,
         );
         break;
@@ -352,6 +380,8 @@ function processOptions(
             options[key] as string[],
             Object.values(TrovePlatform),
           );
+          // Do not overwrite Trove platforms with saved bundle platforms (e.g. ["ebook"])
+          continue;
         } else {
           checkArrayOption(options[key] as string[], Object.values(Platform));
         }
@@ -572,6 +602,11 @@ export function generateShellCompletion(
       lines.push(
         `complete -c ${programName}${shortPart} -l ${kebab}${valPart} -d '${desc}'`,
       );
+      if (argBooleans.includes(key)) {
+        lines.push(
+          `complete -c ${programName} -l no-${kebab} -d 'Disable ${kebab}'`,
+        );
+      }
     }
     return `${lines.join("\n")}\n`;
   }

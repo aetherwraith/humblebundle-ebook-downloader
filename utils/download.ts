@@ -9,6 +9,7 @@ import {
   checksum,
   computeFileHash,
   getChecksumCacheKey,
+  getChecksumEntry,
   getRequiredHashOptions,
   isHashVerified,
   tryHardlinkExistingFile,
@@ -20,6 +21,8 @@ import {
   downloadCoverArt,
   ensureDirCached,
   extractArchive,
+  getExtractedDirPath,
+  isExtractableArchive,
   writeJsonFile,
   writeNfoSidecar,
   writeOpfSidecar,
@@ -39,6 +42,20 @@ const activePartFiles = new Set<string>();
  */
 export function getActivePartFiles(): ReadonlySet<string> {
   return activePartFiles;
+}
+
+function recordFailedDownload(
+  totals: Totals | undefined,
+  download: DownloadInfo,
+  error: string,
+): void {
+  if (!totals) return;
+  totals.failedDownloads = totals.failedDownloads ?? [];
+  totals.failedDownloads.push({
+    fileName: download.fileName,
+    bundle: download.bundle,
+    error,
+  });
 }
 
 /**
@@ -139,6 +156,11 @@ export async function doDownload(
         )
         : await refreshDownloadUrl(download, options, true);
       req = await fetchWithRange(download.url, existingPartSize);
+      if (req.status === 416 && existingPartSize > 0) {
+        await Deno.remove(resumePartPath).catch(() => {});
+        existingPartSize = 0;
+        req = await fetchWithRange(download.url, 0);
+      }
       if (!req.ok) {
         throw new Error(
           `Failed to download after refresh: HTTP ${req.status} ${req.statusText}`,
@@ -149,10 +171,24 @@ export async function doDownload(
     }
   }
 
-  const isPartial = req.status === 206 && existingPartSize > 0;
+  let isPartial = req.status === 206 && existingPartSize > 0;
+  if (isPartial && download.file_size && download.file_size > 0) {
+    const cr = req.headers.get("content-range");
+    const totalMatch = cr?.match(/\/(\d+)$/);
+    if (totalMatch && Number(totalMatch[1]) !== download.file_size) {
+      await req.body?.cancel().catch(() => {});
+      await Deno.remove(resumePartPath).catch(() => {});
+      existingPartSize = 0;
+      isPartial = false;
+      req = await fetchWithRange(download.url, 0);
+      if (!req.ok) {
+        throw new Error(`HTTP ${req.status}: ${req.statusText}`);
+      }
+    }
+  }
   const contentLength = Number(req.headers.get("content-length")) || 0;
   const expectedTotalSize = isPartial
-    ? existingPartSize + contentLength
+    ? (contentLength > 0 ? existingPartSize + contentLength : 0)
     : contentLength;
 
   if (!req.body) {
@@ -214,8 +250,12 @@ export async function doDownload(
       download.fileName,
       options?.downloadFolder,
     );
-    const previousErrors = (checksums[cacheKey]?.hashErrors ??
-      checksums[download.fileName]?.hashErrors) ?? 0;
+    const existingEntry = getChecksumEntry(
+      checksums,
+      cacheKey,
+      download.fileName,
+    );
+    const previousErrors = existingEntry?.hashErrors ?? 0;
 
     hash.verifiedSize = stat.size;
     if ((download.sha1 || download.md5) && !isHashVerified(download, hash)) {
@@ -388,12 +428,7 @@ function enqueueDownloadWithRetry({
       progress.log(
         `Failed to ${actionLabel} ${download.fileName} after ${retryOptions.maxAttempts} attempts: ${errorMsg}`,
       );
-      totals.failedDownloads = totals.failedDownloads ?? [];
-      totals.failedDownloads.push({
-        fileName: download.fileName,
-        bundle: download.bundle,
-        error: errorMsg,
-      });
+      recordFailedDownload(totals, download, errorMsg);
     } finally {
       progressBar.increment();
     }
@@ -454,6 +489,29 @@ export function downloadItems(
         await maybeFlushChecksums();
       }
       if (signal?.aborted) return;
+
+      if (
+        !match && options?.extract && options?.extractClean &&
+        isExtractableArchive(download.filePath)
+      ) {
+        const extractedDir = getExtractedDirPath(download.filePath);
+        const cached = getChecksumEntry(checksums, cacheKey, download.fileName);
+        if (
+          cached &&
+          ((download.sha1 || download.md5)
+            ? isHashVerified(download, cached)
+            : Boolean(cached.verifiedSize))
+        ) {
+          try {
+            const dirStat = await Deno.stat(extractedDir);
+            if (dirStat.isDirectory) {
+              match = true;
+            }
+          } catch {
+            // Extracted directory missing; proceed with normal check/download
+          }
+        }
+      }
 
       if (!match) {
         // Check if the file already exists at an orphaned old path in downloadFolder
@@ -583,6 +641,15 @@ export function verifyItems(
     queues.fileCheck.add(async () => {
       if (signal?.aborted) return;
 
+      const failOrRepair = (repairReason: string, failedError: string) => {
+        if (repair) {
+          enqueueRepairDownload(download, repairReason);
+        } else {
+          recordFailedDownload(totals, download, failedError);
+          verifyProgress.increment();
+        }
+      };
+
       let stat: Deno.FileInfo;
       try {
         stat = await Deno.stat(download.filePath);
@@ -591,17 +658,7 @@ export function verifyItems(
         }
       } catch {
         progressDebug(progress, `Missing file on disk: ${download.filePath}`);
-        if (repair) {
-          enqueueRepairDownload(download, "missing on disk");
-        } else {
-          totals.failedDownloads = totals.failedDownloads ?? [];
-          totals.failedDownloads.push({
-            fileName: download.fileName,
-            bundle: download.bundle,
-            error: "Missing on disk",
-          });
-          verifyProgress.increment();
-        }
+        failOrRepair("missing on disk", "Missing on disk");
         return;
       }
 
@@ -619,7 +676,7 @@ export function verifyItems(
         download.fileName,
         options?.downloadFolder,
       );
-      const existing = checksums[cacheKey] ?? checksums[download.fileName];
+      const existing = getChecksumEntry(checksums, cacheKey, download.fileName);
       checksums[cacheKey] = {
         ...existing,
         ...diskHash,
@@ -637,17 +694,10 @@ export function verifyItems(
             diskHash.sha1 ?? "none"
           } md5=${diskHash.md5 ?? "none"}`,
         );
-        if (repair) {
-          enqueueRepairDownload(download, "checksum mismatch");
-          return;
-        }
-        totals.failedDownloads = totals.failedDownloads ?? [];
-        totals.failedDownloads.push({
-          fileName: download.fileName,
-          bundle: download.bundle,
-          error: "Checksum mismatch against Humble Bundle API",
-        });
-        verifyProgress.increment();
+        failOrRepair(
+          "checksum mismatch",
+          "Checksum mismatch against Humble Bundle API",
+        );
         return;
       }
 
@@ -659,17 +709,7 @@ export function verifyItems(
             progress,
             `Structural validation failed for ${download.fileName}: ${reason}`,
           );
-          if (repair) {
-            enqueueRepairDownload(download, reason);
-            return;
-          }
-          totals.failedDownloads = totals.failedDownloads ?? [];
-          totals.failedDownloads.push({
-            fileName: download.fileName,
-            bundle: download.bundle,
-            error: reason,
-          });
-          verifyProgress.increment();
+          failOrRepair(reason, reason);
           return;
         }
       }

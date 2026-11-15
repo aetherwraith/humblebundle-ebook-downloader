@@ -106,13 +106,15 @@ export function parseRscStream(bytes: Uint8Array): Map<string, unknown> {
       }
       if (comma < len && bytes[comma] === 0x2c) {
         const hexStr = textDecoder.decode(bytes.subarray(pos + 1, comma));
-        const byteLen = parseInt(hexStr, 16);
-        if (!isNaN(byteLen) && byteLen >= 0) {
-          const start = comma + 1;
-          const end = Math.min(len, start + byteLen);
-          rows.set(id, textDecoder.decode(bytes.subarray(start, end)));
-          pos = end;
-          continue;
+        if (/^[0-9a-f]+$/i.test(hexStr)) {
+          const byteLen = parseInt(hexStr, 16);
+          if (!isNaN(byteLen) && byteLen >= 0) {
+            const start = comma + 1;
+            const end = Math.min(len, start + byteLen);
+            rows.set(id, textDecoder.decode(bytes.subarray(start, end)));
+            pos = end;
+            continue;
+          }
         }
       }
     }
@@ -199,6 +201,22 @@ function registerChunkPaths(routeKey: string, text: string): string[] {
   return knownChunkPathsByRoute.get(routeKey) ?? [];
 }
 
+const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
+
+function parseRetryAfterMs(headerVal: string | null): number | undefined {
+  if (!headerVal) return undefined;
+  const sec = Number(headerVal);
+  if (!isNaN(sec) && sec > 0) {
+    return Math.min(sec * 1000, 10_000);
+  }
+  const dateMs = Date.parse(headerVal);
+  if (!isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    if (diff > 0) return Math.min(diff, 10_000);
+  }
+  return undefined;
+}
+
 /**
  * Performs an HTTP fetch with automatic retries for transient network errors,
  * HTTP 429 Too Many Requests (respecting Retry-After), and 5xx server errors.
@@ -213,22 +231,26 @@ export async function fetchWithRetry(
   while (attempt < maxAttempts) {
     attempt++;
     try {
-      const response = await fetch(url, init);
+      const timeoutSignal = AbortSignal.timeout(DEFAULT_HTTP_TIMEOUT_MS);
+      const signal = init?.signal
+        ? AbortSignal.any([init.signal, timeoutSignal])
+        : timeoutSignal;
+      const response = await fetch(url, { ...init, signal });
       if (
         (response.status === 429 || response.status >= 500) &&
         attempt < maxAttempts
       ) {
-        const retryAfterHeader = response.headers.get("retry-after");
-        const retryAfterSec = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-        const waitMs = !isNaN(retryAfterSec) && retryAfterSec > 0
-          ? Math.min(retryAfterSec * 1000, 10000)
-          : (retryOptions.minTimeout ?? 10) * Math.pow(2, attempt - 1);
+        const waitMs = parseRetryAfterMs(response.headers.get("retry-after")) ??
+          (retryOptions.minTimeout ?? 10) * Math.pow(2, attempt - 1);
         await response.body?.cancel().catch(() => {});
         await delay(waitMs);
         continue;
       }
       return response;
     } catch (err) {
+      if (init?.signal?.aborted) {
+        throw err;
+      }
       lastError = err;
       if (attempt >= maxAttempts) {
         throw err;
@@ -430,6 +452,18 @@ async function resolveNextActionId(
   return lookupPromise;
 }
 
+async function invalidateActionCachesOn409(options: Options): Promise<void> {
+  nextActionIdCache.clear();
+  chunkTextCache.clear();
+  knownChunkPathsByRoute.clear();
+  actionIdsLoadPromise = Promise.resolve();
+  if (options.downloadFolder && !options.dryRun) {
+    await writeJsonFile(options.downloadFolder, "actionIds.json", {}).catch(
+      () => {},
+    );
+  }
+}
+
 /**
  * Invokes a Next.js Server Action on `pagePath`, automatically handling deployment skew (`HTTP 409`)
  * by re-discovering the fresh action ID once if needed.
@@ -457,10 +491,7 @@ async function invokeNextServerAction<T = unknown>(
 
     if (resp.status === 409 && attempt === 0) {
       await resp.body?.cancel().catch(() => {});
-      nextActionIdCache.clear();
-      chunkTextCache.clear();
-      knownChunkPathsByRoute.clear();
-      actionIdsLoadPromise = Promise.resolve();
+      await invalidateActionCachesOn409(options);
       continue;
     }
 
@@ -909,92 +940,108 @@ interface PendingEntitlementBatch {
 }
 const pendingEntitlementBatches = new Map<string, PendingEntitlementBatch>();
 
+function getOrRefreshCachedSignedMap(
+  cache: Map<string, Promise<CachedSignedMap>>,
+  key: string,
+  forceRefresh: boolean,
+  startFetch: () => Promise<CachedSignedMap>,
+): Promise<CachedSignedMap> {
+  if (forceRefresh) {
+    cache.delete(key);
+  } else {
+    const existing = cache.get(key);
+    if (existing) {
+      return existing.then((cached) => {
+        if (cached.expiresAtMs > Date.now() + 5 * 60_000) {
+          return cached;
+        }
+        if (cache.get(key) !== existing) {
+          return getOrRefreshCachedSignedMap(cache, key, false, startFetch);
+        }
+        cache.delete(key);
+        return getOrRefreshCachedSignedMap(cache, key, true, startFetch);
+      });
+    }
+  }
+  const promise = startFetch();
+  cache.set(key, promise);
+  return promise;
+}
+
 function fetchEntitlementSignedMap(
   entitlementId: string,
   gameKey: string,
   options: Options,
   forceRefresh = false,
 ): Promise<CachedSignedMap> {
-  if (forceRefresh) {
-    entitlementSignedUrlsCache.delete(entitlementId);
-  } else {
-    const existing = entitlementSignedUrlsCache.get(entitlementId);
-    if (existing) {
-      return existing.then((cached) => {
-        if (cached.expiresAtMs > Date.now() + 5 * 60_000) {
-          return cached;
-        }
-        entitlementSignedUrlsCache.delete(entitlementId);
-        return fetchEntitlementSignedMap(entitlementId, gameKey, options, true);
-      });
-    }
-  }
+  return getOrRefreshCachedSignedMap(
+    entitlementSignedUrlsCache,
+    entitlementId,
+    forceRefresh,
+    () =>
+      new Promise<CachedSignedMap>(
+        (resolvePromise, rejectPromise) => {
+          let batch = pendingEntitlementBatches.get(gameKey);
+          const flushBatch = (b: PendingEntitlementBatch) => {
+            pendingEntitlementBatches.delete(gameKey);
+            const ids = [...b.items.keys()];
+            const pagePath = encodeLibraryKeyPath(b.gameKey);
+            invokeNextServerAction<SignedUrlActionResult>(
+              "getSignedUrlsForEntitlements",
+              pagePath,
+              [ids],
+              b.options,
+            )
+              .then((res) => {
+                if (!res?.ok || !res.data?.signedUrls) {
+                  throw new Error(
+                    `Unable to sign bundle download URLs (${
+                      res?.code ?? "unknown error"
+                    })`,
+                  );
+                }
+                const expiresAtMs = res.data.expiresAt
+                  ? Date.parse(res.data.expiresAt)
+                  : Date.now() + 3600_000;
+                const sharedMap: CachedSignedMap = {
+                  signedUrls: res.data.signedUrls,
+                  expiresAtMs: isNaN(expiresAtMs)
+                    ? Date.now() + 3600_000
+                    : expiresAtMs,
+                };
+                for (const callbacks of b.items.values()) {
+                  for (const cb of callbacks) cb.resolve(sharedMap);
+                }
+              })
+              .catch((err) => {
+                for (const id of ids) entitlementSignedUrlsCache.delete(id);
+                for (const callbacks of b.items.values()) {
+                  for (const cb of callbacks) cb.reject(err);
+                }
+              });
+          };
 
-  const promise = new Promise<CachedSignedMap>(
-    (resolvePromise, rejectPromise) => {
-      let batch = pendingEntitlementBatches.get(gameKey);
-      const flushBatch = (b: PendingEntitlementBatch) => {
-        pendingEntitlementBatches.delete(gameKey);
-        const ids = [...b.items.keys()];
-        const pagePath = encodeLibraryKeyPath(b.gameKey);
-        invokeNextServerAction<SignedUrlActionResult>(
-          "getSignedUrlsForEntitlements",
-          pagePath,
-          [ids],
-          b.options,
-        )
-          .then((res) => {
-            if (!res?.ok || !res.data?.signedUrls) {
-              throw new Error(
-                `Unable to sign bundle download URLs (${
-                  res?.code ?? "unknown error"
-                })`,
-              );
-            }
-            const expiresAtMs = res.data.expiresAt
-              ? Date.parse(res.data.expiresAt)
-              : Date.now() + 3600_000;
-            const sharedMap: CachedSignedMap = {
-              signedUrls: res.data.signedUrls,
-              expiresAtMs: isNaN(expiresAtMs)
-                ? Date.now() + 3600_000
-                : expiresAtMs,
+          if (!batch) {
+            batch = {
+              gameKey,
+              options,
+              items: new Map(),
+              timer: setTimeout(() => flushBatch(batch!), 15),
             };
-            for (const callbacks of b.items.values()) {
-              for (const cb of callbacks) cb.resolve(sharedMap);
-            }
-          })
-          .catch((err) => {
-            for (const id of ids) entitlementSignedUrlsCache.delete(id);
-            for (const callbacks of b.items.values()) {
-              for (const cb of callbacks) cb.reject(err);
-            }
-          });
-      };
+            pendingEntitlementBatches.set(gameKey, batch);
+          }
 
-      if (!batch) {
-        batch = {
-          gameKey,
-          options,
-          items: new Map(),
-          timer: setTimeout(() => flushBatch(batch!), 15),
-        };
-        pendingEntitlementBatches.set(gameKey, batch);
-      }
+          const list = batch.items.get(entitlementId) ?? [];
+          list.push({ resolve: resolvePromise, reject: rejectPromise });
+          batch.items.set(entitlementId, list);
 
-      const list = batch.items.get(entitlementId) ?? [];
-      list.push({ resolve: resolvePromise, reject: rejectPromise });
-      batch.items.set(entitlementId, list);
-
-      if (batch.items.size >= 25) {
-        clearTimeout(batch.timer);
-        flushBatch(batch);
-      }
-    },
+          if (batch.items.size >= 25) {
+            clearTimeout(batch.timer);
+            flushBatch(batch);
+          }
+        },
+      ),
   );
-
-  entitlementSignedUrlsCache.set(entitlementId, promise);
-  return promise;
 }
 
 function lookupSignedUrlInMap(
@@ -1195,10 +1242,7 @@ async function fetchFilteredLibraryPage(
 
     if (resp.status === 409 && attempt === 0) {
       await resp.body?.cancel().catch(() => {});
-      nextActionIdCache.clear();
-      chunkTextCache.clear();
-      knownChunkPathsByRoute.clear();
-      actionIdsLoadPromise = Promise.resolve();
+      await invalidateActionCachesOn409(options);
       continue;
     }
 
@@ -1546,7 +1590,9 @@ export async function getAllBundles(
       }
 
       for (const b of libProps.bundleItems ?? []) {
-        const id = b.productEntitlementId ?? b.id;
+        const id = b.type === "entitlement-group" && b.id
+          ? `group/${b.id}`
+          : (b.productEntitlementId ?? b.id);
         if (!id) continue;
         allLiveBundleIds.add(id);
         if (b.title) {
@@ -1595,6 +1641,7 @@ export async function getAllBundles(
       (!targetBundleKeys || targetBundleKeys.has(b.gamekey.toLowerCase())),
   );
 
+  let bundlesFlushPromise: Promise<void> | undefined;
   if (idsToFetch.length > 0) {
     const headers = getRequestHeaders(options);
     const progressBar: SingleBarWrapper = progress.create(
@@ -1605,7 +1652,6 @@ export async function getAllBundles(
       },
     );
     let newlyFetchedSinceCheckpoint = 0;
-    let bundlesFlushInFlight = false;
 
     for (const bundleId of idsToFetch) {
       queues.orderInfo.add(async () => {
@@ -1621,19 +1667,18 @@ export async function getAllBundles(
             !options.dryRun &&
             !targetBundleKeys &&
             newlyFetchedSinceCheckpoint >= 40 &&
-            !bundlesFlushInFlight
+            !bundlesFlushPromise
           ) {
             newlyFetchedSinceCheckpoint = 0;
-            bundlesFlushInFlight = true;
             const snapshot = [...liveBundles, ...legacyPool];
-            writeJsonFile(
+            bundlesFlushPromise = writeJsonFile(
               options.downloadFolder,
               "bundles.json",
               snapshot,
             )
               .catch(() => {})
               .finally(() => {
-                bundlesFlushInFlight = false;
+                bundlesFlushPromise = undefined;
               });
           }
         } catch (err) {
@@ -1695,12 +1740,14 @@ export async function getAllBundles(
       }
       for (const b of liveBundles) mergedMap.set(b.gamekey, b);
       for (const b of legacyPool) mergedMap.set(b.gamekey, b);
+      if (bundlesFlushPromise) await bundlesFlushPromise;
       await writeJsonFile(
         options.downloadFolder,
         "bundles.json",
         [...mergedMap.values()],
       );
     } else {
+      if (bundlesFlushPromise) await bundlesFlushPromise;
       await writeJsonFile(
         options.downloadFolder,
         "bundles.json",
@@ -1852,88 +1899,76 @@ function fetchVaultSignedMapBatched(
   options: Options,
   forceRefresh = false,
 ): Promise<CachedSignedMap> {
-  if (forceRefresh) {
-    vaultSignedUrlsCache.delete(subProductId);
-  } else {
-    const existing = vaultSignedUrlsCache.get(subProductId);
-    if (existing) {
-      return existing.then((cached) => {
-        if (cached.expiresAtMs > Date.now() + 5 * 60_000) {
-          return cached;
-        }
-        vaultSignedUrlsCache.delete(subProductId);
-        return fetchVaultSignedMapBatched(subProductId, options, true);
-      });
-    }
-  }
+  return getOrRefreshCachedSignedMap(
+    vaultSignedUrlsCache,
+    subProductId,
+    forceRefresh,
+    () =>
+      new Promise<CachedSignedMap>(
+        (resolvePromise, rejectPromise) => {
+          let batch = pendingVaultBatches.find((b) => b.items.size < 25);
+          const flushBatch = (b: (typeof pendingVaultBatches)[number]) => {
+            const idx = pendingVaultBatches.indexOf(b);
+            if (idx !== -1) pendingVaultBatches.splice(idx, 1);
+            const ids = [...b.items.keys()];
+            invokeNextServerAction<SignedUrlActionResult>(
+              "getVaultSignedUrls",
+              LIBRARY_PATH,
+              [ids],
+              b.options,
+            )
+              .then((res) => {
+                if (!res?.ok || !res.data?.signedUrls) {
+                  throw new Error(
+                    res?.code === "denied"
+                      ? `Humble Vault access denied (${res.code})`
+                      : `Failed to sign Vault URL (${
+                        res?.code ?? "unknown error"
+                      })`,
+                  );
+                }
+                const expiresAtMs = res.data.expiresAt
+                  ? Date.parse(res.data.expiresAt)
+                  : Date.now() + 3600_000;
+                const sharedMap: CachedSignedMap = {
+                  signedUrls: res.data.signedUrls,
+                  expiresAtMs: isNaN(expiresAtMs)
+                    ? Date.now() + 3600_000
+                    : expiresAtMs,
+                };
+                for (const callbacks of b.items.values()) {
+                  for (const cb of callbacks) cb.resolve(sharedMap);
+                }
+              })
+              .catch((err) => {
+                for (const id of ids) vaultSignedUrlsCache.delete(id);
+                for (const callbacks of b.items.values()) {
+                  for (const cb of callbacks) cb.reject(err);
+                }
+              });
+          };
 
-  const promise = new Promise<CachedSignedMap>(
-    (resolvePromise, rejectPromise) => {
-      let batch = pendingVaultBatches.find((b) => b.items.size < 25);
-      const flushBatch = (b: (typeof pendingVaultBatches)[number]) => {
-        const idx = pendingVaultBatches.indexOf(b);
-        if (idx !== -1) pendingVaultBatches.splice(idx, 1);
-        const ids = [...b.items.keys()];
-        invokeNextServerAction<SignedUrlActionResult>(
-          "getVaultSignedUrls",
-          LIBRARY_PATH,
-          [ids],
-          b.options,
-        )
-          .then((res) => {
-            if (!res?.ok || !res.data?.signedUrls) {
-              throw new Error(
-                res?.code === "denied"
-                  ? `Humble Vault access denied (${res.code})`
-                  : `Failed to sign Vault URL (${
-                    res?.code ?? "unknown error"
-                  })`,
-              );
-            }
-            const expiresAtMs = res.data.expiresAt
-              ? Date.parse(res.data.expiresAt)
-              : Date.now() + 3600_000;
-            const sharedMap: CachedSignedMap = {
-              signedUrls: res.data.signedUrls,
-              expiresAtMs: isNaN(expiresAtMs)
-                ? Date.now() + 3600_000
-                : expiresAtMs,
+          if (!batch) {
+            const newBatch: (typeof pendingVaultBatches)[number] = {
+              options,
+              items: new Map(),
+              timer: setTimeout(() => flushBatch(newBatch), 15),
             };
-            for (const callbacks of b.items.values()) {
-              for (const cb of callbacks) cb.resolve(sharedMap);
-            }
-          })
-          .catch((err) => {
-            for (const id of ids) vaultSignedUrlsCache.delete(id);
-            for (const callbacks of b.items.values()) {
-              for (const cb of callbacks) cb.reject(err);
-            }
-          });
-      };
+            pendingVaultBatches.push(newBatch);
+            batch = newBatch;
+          }
 
-      if (!batch) {
-        const newBatch: (typeof pendingVaultBatches)[number] = {
-          options,
-          items: new Map(),
-          timer: setTimeout(() => flushBatch(newBatch), 15),
-        };
-        pendingVaultBatches.push(newBatch);
-        batch = newBatch;
-      }
+          const list = batch.items.get(subProductId) ?? [];
+          list.push({ resolve: resolvePromise, reject: rejectPromise });
+          batch.items.set(subProductId, list);
 
-      const list = batch.items.get(subProductId) ?? [];
-      list.push({ resolve: resolvePromise, reject: rejectPromise });
-      batch.items.set(subProductId, list);
-
-      if (batch.items.size >= 25) {
-        clearTimeout(batch.timer);
-        flushBatch(batch);
-      }
-    },
+          if (batch.items.size >= 25) {
+            clearTimeout(batch.timer);
+            flushBatch(batch);
+          }
+        },
+      ),
   );
-
-  vaultSignedUrlsCache.set(subProductId, promise);
-  return promise;
 }
 
 export async function getTroveURL(

@@ -96,6 +96,16 @@ export function markChecksumCacheClean(
 }
 
 /**
+ * Marks `checksums` as dirty (e.g., if a concurrent write failed).
+ */
+export function markChecksumCacheDirty(
+  checksums: Record<string, Checksums>,
+): void {
+  const state = checksumDirtyState.get(checksums);
+  if (state) state.dirty = true;
+}
+
+/**
  * Ensures a directory exists on disk, memoizing the resolved path in memory
  * to avoid redundant `Deno.mkdir` syscalls across thousands of items.
  */
@@ -159,11 +169,20 @@ export async function writeJsonFile(
 ): Promise<void> {
   const filePath = resolve(folder, sanitizeFilename(file));
   const tmpPath = `${filePath}.${crypto.randomUUID().slice(0, 8)}.tmp`;
-  await ensureDirCached(folder);
-  await Deno.writeTextFile(tmpPath, serializeJsonForFile(file, contents));
-  await Deno.rename(tmpPath, filePath);
-  if (contents && typeof contents === "object") {
+  const serialized = serializeJsonForFile(file, contents);
+  const isObj = Boolean(contents && typeof contents === "object");
+  if (isObj) {
     markChecksumCacheClean(contents as Record<string, Checksums>);
+  }
+  try {
+    await ensureDirCached(folder);
+    await Deno.writeTextFile(tmpPath, serialized);
+    await Deno.rename(tmpPath, filePath);
+  } catch (err) {
+    if (isObj) {
+      markChecksumCacheDirty(contents as Record<string, Checksums>);
+    }
+    throw err;
   }
 }
 
@@ -372,28 +391,32 @@ export async function clean(
               ? `[Dry Run] Would move extra file to .trash: ${filePath}`
               : `[Dry Run] Would delete extra file: ${filePath}`,
           );
-          totals.removedFiles += 1;
         } else if (options.backupReplaced) {
           debugLog(`Backing up extra file to .trash: ${filePath}`);
-          totals.removedFiles += 1;
           const rel = relative(rootFolder, resolve(filePath));
           const trashTarget = resolve(trashRoot, rel);
           try {
             await ensureDirCached(dirname(trashTarget));
             await Deno.rename(filePath, trashTarget);
+            totals.removedFiles += 1;
           } catch {
             // Fallback to copy + remove across filesystems
             try {
               await Deno.copyFile(filePath, trashTarget);
               await Deno.remove(filePath);
+              totals.removedFiles += 1;
             } catch {
               // Ignore errors backing up file
             }
           }
         } else {
           debugLog(`Deleting extra file: ${filePath}`);
-          totals.removedFiles += 1;
-          await Deno.remove(filePath).catch(() => {});
+          try {
+            await Deno.remove(filePath);
+            totals.removedFiles += 1;
+          } catch {
+            // Ignore errors deleting file
+          }
         }
       }),
     );
@@ -519,10 +542,15 @@ export function downloadCoverArt(
       const resp = await fetch(download.icon!, { signal });
       if (!resp.ok || !resp.body) return undefined;
       await ensureDirCached(download.downloadPath);
-      const bytes = new Uint8Array(await resp.arrayBuffer());
-      await Deno.writeFile(coverPath, bytes);
+      const outFile = await Deno.open(coverPath, {
+        write: true,
+        create: true,
+        truncate: true,
+      });
+      await resp.body.pipeTo(outFile.writable);
       return coverPath;
     } catch {
+      await Deno.remove(coverPath).catch(() => {});
       return undefined;
     } finally {
       inFlightCovers.delete(key);
@@ -639,6 +667,7 @@ export async function generateAudioPlaylists(
   }
 
   const createdPlaylists: string[] = [];
+  const tasks: Array<() => Promise<void>> = [];
   for (const [folder, items] of byFolder.entries()) {
     items.sort((a, b) =>
       a.fileName.localeCompare(b.fileName, undefined, {
@@ -653,11 +682,18 @@ export async function generateAudioPlaylists(
       lines.push(`#EXTINF:-1,${track.name} - ${displayTitle}`);
       lines.push(track.fileName);
     }
-    if (!dryRun) {
-      await ensureDirCached(folder);
-      await Deno.writeTextFile(playlistPath, `${lines.join("\n")}\n`);
-    }
     createdPlaylists.push(playlistPath);
+    if (!dryRun) {
+      const content = `${lines.join("\n")}\n`;
+      tasks.push(async () => {
+        await ensureDirCached(folder);
+        await Deno.writeTextFile(playlistPath, content);
+      });
+    }
+  }
+  const WRITE_BATCH = 16;
+  for (let i = 0; i < tasks.length; i += WRITE_BATCH) {
+    await Promise.all(tasks.slice(i, i + WRITE_BATCH).map((fn) => fn()));
   }
   return createdPlaylists;
 }
@@ -848,29 +884,35 @@ export async function writeExternalLinkSidecars(
 ): Promise<number> {
   const report = buildUnclaimedReport(bundles, options);
   let written = 0;
-  for (const ext of report.externalLinks) {
-    const folder = options.bundleFolders
-      ? resolve(options.downloadFolder, sanitizeFilename(ext.bundle))
-      : resolve(options.downloadFolder, "External Links");
-    const safeName = sanitizeFilename(`${ext.product} (${ext.label})`) ||
-      sanitizeFilename(ext.product) ||
-      "external_link";
-    const urlPath = resolve(folder, `${safeName}.url`);
-    if (options.dryRun) {
-      progress?.log(`[Dry Run] Would write external link: ${urlPath}`);
-      written++;
-      continue;
-    }
-    try {
-      await ensureDirCached(folder);
-      await Deno.writeTextFile(
-        urlPath,
-        `[InternetShortcut]\nURL=${ext.url}\n`,
-      );
-      written++;
-    } catch {
-      // Ignore write failures
-    }
+  const WRITE_BATCH = 16;
+  for (let i = 0; i < report.externalLinks.length; i += WRITE_BATCH) {
+    const batch = report.externalLinks.slice(i, i + WRITE_BATCH);
+    const results = await Promise.all(
+      batch.map(async (ext) => {
+        const folder = options.bundleFolders
+          ? resolve(options.downloadFolder, sanitizeFilename(ext.bundle))
+          : resolve(options.downloadFolder, "External Links");
+        const safeName = sanitizeFilename(`${ext.product} (${ext.label})`) ||
+          sanitizeFilename(ext.product) ||
+          "external_link";
+        const urlPath = resolve(folder, `${safeName}.url`);
+        if (options.dryRun) {
+          progress?.log(`[Dry Run] Would write external link: ${urlPath}`);
+          return 1;
+        }
+        try {
+          await ensureDirCached(folder);
+          await Deno.writeTextFile(
+            urlPath,
+            `[InternetShortcut]\nURL=${ext.url}\n`,
+          );
+          return 1;
+        } catch {
+          return 0;
+        }
+      }),
+    );
+    for (const n of results) written += n;
   }
   return written;
 }
@@ -891,7 +933,7 @@ export async function exportCatalog(
     fileName: d.fileName,
     filePath: d.filePath,
     fileSize: d.file_size ?? 0,
-    date: d.date.toISOString(),
+    date: isNaN(d.date.getTime()) ? "" : d.date.toISOString(),
     sha1: d.sha1 ?? "",
     md5: d.md5 ?? "",
     productUrl: d.productUrl ?? "",
@@ -1163,24 +1205,14 @@ export async function printBundlesList(
     byGameKey.set(item.gameKey, entry);
   }
 
-  const BATCH_SIZE = 32;
-  for (let i = 0; i < uncachedChecks.length; i += BATCH_SIZE) {
-    const batch = uncachedChecks.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(async (chk) => {
-        try {
-          const st = await Deno.stat(chk.filePath);
-          return st.isFile ? chk.gameKey : null;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    for (const gk of results) {
-      if (gk) {
-        const entry = byGameKey.get(gk);
-        if (entry) entry.downloaded++;
-      }
+  const foundUncached = await statFilesInBatches(
+    uncachedChecks,
+    (chk) => chk.filePath,
+  );
+  for (const chk of foundUncached) {
+    if (chk) {
+      const entry = byGameKey.get(chk.gameKey);
+      if (entry) entry.downloaded++;
     }
   }
 
@@ -1190,8 +1222,11 @@ export async function printBundlesList(
       downloaded: 0,
       bytes: 0,
     };
+    const createdDate = new Date(b.created);
     return {
-      date: new Date(b.created).toISOString().split("T")[0],
+      date: isNaN(createdDate.getTime())
+        ? ""
+        : createdDate.toISOString().split("T")[0],
       gameKey: b.gamekey,
       name: b.product.human_name,
       downloaded: stats.downloaded,
@@ -1467,7 +1502,10 @@ export async function computeAndPrintDiff(
 
   for (const b of currentBundles) {
     if (!b.gamekey || prevKeys.has(b.gamekey)) continue;
-    const date = new Date(b.created).toISOString().split("T")[0];
+    const createdDate = new Date(b.created);
+    const date = isNaN(createdDate.getTime())
+      ? ""
+      : createdDate.toISOString().split("T")[0];
     const row = { date, gameKey: b.gamekey, name: b.product.human_name };
     if (
       !isUnmigratedLegacyBundle(b) &&
@@ -1509,27 +1547,18 @@ export async function computeAndPrintDiff(
     }
   }
 
-  const BATCH_SIZE = 32;
-  for (let i = 0; i < missingCacheChecks.length; i += BATCH_SIZE) {
-    const batch = missingCacheChecks.slice(i, i + BATCH_SIZE);
-    const existsList = await Promise.all(
-      batch.map(async (item) => {
-        try {
-          const st = await Deno.stat(item.filePath);
-          return st.isFile;
-        } catch {
-          return false;
-        }
-      }),
-    );
-    for (let j = 0; j < batch.length; j++) {
-      if (!existsList[j]) {
-        newDownloads.push({
-          bundle: batch[j].bundle,
-          fileName: batch[j].fileName,
-          filePath: batch[j].filePath,
-        });
-      }
+  const existingItems = await statFilesInBatches(
+    missingCacheChecks,
+    (item) => item.filePath,
+  );
+  for (let i = 0; i < missingCacheChecks.length; i++) {
+    if (!existingItems[i]) {
+      const item = missingCacheChecks[i];
+      newDownloads.push({
+        bundle: item.bundle,
+        fileName: item.fileName,
+        filePath: item.filePath,
+      });
     }
   }
 

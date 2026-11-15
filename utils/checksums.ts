@@ -59,11 +59,24 @@ export function getChecksumCacheKey(
       resolveDownloadFolderFast(downloadFolder),
       resolve(filePath),
     );
-    if (rel && !rel.startsWith("..")) {
+    if (
+      rel && rel !== ".." && !rel.startsWith("../") && !rel.startsWith("..\\")
+    ) {
       return rel.replace(/\\/g, "/");
     }
   }
   return fileName;
+}
+
+/**
+ * Looks up a cached checksum entry by relative cache key first, falling back to bare fileName.
+ */
+export function getChecksumEntry(
+  checksums: Record<string, Checksums>,
+  cacheKey: string,
+  fileName: string,
+): Checksums | undefined {
+  return checksums[cacheKey] ?? checksums[fileName];
 }
 
 /**
@@ -378,7 +391,7 @@ export function buildChecksumHashIndex(
   return index;
 }
 
-const SIDECAR_EXTENSIONS = [
+export const SIDECAR_EXTENSIONS = [
   ".opf",
   ".nfo",
   ".jpg",
@@ -386,6 +399,7 @@ const SIDECAR_EXTENSIONS = [
   ".png",
   ".webp",
   ".gif",
+  ".avif",
 ];
 
 function findCandidateCacheKeys(
@@ -593,8 +607,10 @@ export async function tryHardlinkExistingFile(
         const newSidecar = `${targetStem}${ext}`;
         try {
           await Deno.link(oldSidecar, newSidecar);
-        } catch {
-          await Deno.copyFile(oldSidecar, newSidecar).catch(() => {});
+        } catch (err) {
+          if (!(err instanceof Deno.errors.NotFound)) {
+            await Deno.copyFile(oldSidecar, newSidecar).catch(() => {});
+          }
         }
       }),
     );
@@ -770,11 +786,13 @@ export async function validateFileStructure(
         );
         const cdSize = view.getUint32(12, true);
         const cdOffset = view.getUint32(16, true);
-        if (
-          cdSize > 0 &&
-          cdOffset !== 0xffffffff &&
-          cdOffset + 4 <= size
-        ) {
+        if (cdSize > 0 && cdOffset !== 0xffffffff) {
+          if (cdOffset + 4 > size) {
+            return {
+              valid: false,
+              reason: "ZIP Central Directory offset out of bounds",
+            };
+          }
           const cdHead = await readChunk(cdOffset, 4);
           if (
             cdHead.length < 4 ||
@@ -935,6 +953,43 @@ export async function validateFileStructure(
         head[3] !== 0xa3
       ) {
         return { valid: false, reason: "Missing EBML magic header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".avi")) {
+      if (size < 16) return { valid: false, reason: "AVI file too small" };
+      const head = await readChunk(0, 12);
+      const riff = latin1Decoder.decode(head.subarray(0, 4));
+      const avi = latin1Decoder.decode(head.subarray(8, 12));
+      if (riff !== "RIFF" || avi !== "AVI ") {
+        return { valid: false, reason: "Missing RIFF/AVI header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".mov")) {
+      if (size < 16) return { valid: false, reason: "MOV file too small" };
+      const ident = latin1Decoder.decode(await readChunk(4, 4));
+      if (
+        ident !== "ftyp" &&
+        ident !== "moov" &&
+        ident !== "mdat" &&
+        ident !== "wide" &&
+        ident !== "free"
+      ) {
+        return { valid: false, reason: "Missing QuickTime atom header" };
+      }
+      return { valid: true };
+    }
+
+    if (lower.endsWith(".aac")) {
+      if (size < 16) return { valid: false, reason: "AAC file too small" };
+      const head = await readChunk(0, 3);
+      const isAdts = head[0] === 0xff && (head[1] & 0xf0) === 0xf0;
+      const isId3 = head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33;
+      if (!isAdts && !isId3) {
+        return { valid: false, reason: "Missing ADTS/ID3 header on AAC" };
       }
       return { valid: true };
     }

@@ -103,11 +103,25 @@ export function selectVideoStructs(
   };
 
   const getExtremeStruct = (mode: "best" | "worst"): DownloadStruct => {
-    return [...primaryStructs].sort((a, b) => {
-      const scoreA = getVideoQualityScore(a.file_size, a.name, a.url?.web);
-      const scoreB = getVideoQualityScore(b.file_size, b.name, b.url?.web);
-      return mode === "best" ? scoreB - scoreA : scoreA - scoreB;
-    })[0];
+    let bestStruct = primaryStructs[0];
+    let bestScore = getVideoQualityScore(
+      bestStruct.file_size,
+      bestStruct.name,
+      bestStruct.url?.web,
+    );
+    for (let i = 1; i < primaryStructs.length; i++) {
+      const candidate = primaryStructs[i];
+      const score = getVideoQualityScore(
+        candidate.file_size,
+        candidate.name,
+        candidate.url?.web,
+      );
+      if (mode === "best" ? score > bestScore : score < bestScore) {
+        bestScore = score;
+        bestStruct = candidate;
+      }
+    }
+    return bestStruct;
   };
 
   const selected: DownloadStruct[] = [];
@@ -562,7 +576,7 @@ export function filterBundles(
             structsToAdd.length === 0 &&
             platforms.some((p) => p !== Platform.Ebook)
           ) {
-            structsToAdd = download.download_struct.filter((s) => s.url);
+            structsToAdd = download.download_struct.filter((s) => s.url?.web);
           }
         } else if (
           download.platform === Platform.Video ||
@@ -575,7 +589,8 @@ export function filterBundles(
           );
         } else if (
           download.platform === Platform.Audio ||
-          isComedyAudioDownload(download)
+          (download.platform === Platform.Comedy &&
+            isComedyAudioDownload(download))
         ) {
           structsToAdd = selectAudioStructs(
             download.download_struct,
@@ -584,7 +599,7 @@ export function filterBundles(
           );
         } else {
           // Non-ebook/non-video/non-audio platforms (games, etc.) are added directly
-          structsToAdd = download.download_struct.filter((s) => s.url);
+          structsToAdd = download.download_struct.filter((s) => s.url?.web);
         }
 
         const sharedExts = options.humanFileNames
@@ -593,9 +608,12 @@ export function filterBundles(
 
         for (const struct of structsToAdd) {
           if (!filters.matchesSize(struct.file_size)) continue;
-          const itemDate = struct.uploaded_at
+          const parsedUpload = struct.uploaded_at
             ? new Date(struct.uploaded_at)
             : bundleDate;
+          const itemDate = isNaN(parsedUpload.getTime())
+            ? bundleDate
+            : parsedUpload;
           if (!filters.matchesDate(itemDate)) continue;
 
           let disambiguate = false;
@@ -750,11 +768,14 @@ function buildSelectedDownloadInfos(
   let maxDate = bundleDate;
 
   for (const struct of selectedStructs) {
-    if (!struct.url) continue;
+    if (!struct.url?.web) continue;
     if (!filters.matchesSize(struct.file_size)) continue;
-    const uploadedAt = struct.uploaded_at
+    const parsedUpload = struct.uploaded_at
       ? new Date(struct.uploaded_at)
       : bundleDate;
+    const uploadedAt = isNaN(parsedUpload.getTime())
+      ? bundleDate
+      : parsedUpload;
     const itemDate = uploadedAt > bundleDate ? uploadedAt : bundleDate;
     if (!filters.matchesDate(itemDate)) continue;
     if (itemDate > maxDate) maxDate = itemDate;

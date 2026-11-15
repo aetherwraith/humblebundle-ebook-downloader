@@ -84,6 +84,7 @@ export function parseCookieInput(input: string): string {
 
   // 1. Netscape cookies.txt format (tab-separated or starting with `#`)
   if (trimmed.includes("\t") || trimmed.startsWith("#")) {
+    const nowSec = Math.floor(Date.now() / 1000);
     const pairs: string[] = [];
     for (const line of trimmed.split(/\r?\n/)) {
       const l = line.trim();
@@ -92,6 +93,8 @@ export function parseCookieInput(input: string): string {
       const parts = clean.split(/\t+/);
       if (parts.length >= 7) {
         const domain = parts[0].toLowerCase();
+        const expires = Number(parts[4]);
+        if (expires > 0 && expires < nowSec) continue;
         if (domain.includes("humblebundle.com")) {
           pairs.push(`${parts[5].trim()}=${parts[6].trim()}`);
         }
@@ -615,7 +618,14 @@ export function resolveOutputTemplate(
     dotExt &&
     !fileName.toLowerCase().endsWith(dotExt.toLowerCase())
   ) {
-    fileName = sanitizeFilename(`${fileName}${dotExt}`);
+    const extBytes = new TextEncoder().encode(dotExt).length;
+    const maxBaseBytes = Math.max(1, 255 - extBytes);
+    const basePart =
+      sanitizeFilename(truncateUtf8Bytes(fileName, maxBaseBytes)) ||
+      "file";
+    fileName = sanitizeFilename(`${basePart}${dotExt}`);
+  } else {
+    fileName = sanitizeFilename(fileName) || `file${dotExt}`;
   }
   const downloadPath = resolve(downloadFolder, ...segments);
   const filePath = resolve(downloadPath, fileName);
@@ -675,11 +685,14 @@ export function compileItemFilters(
   };
 }
 
+const DOWNLOAD_NAME_COLLATOR = new Intl.Collator();
+
 /**
  * Sorts resolved DownloadInfo items descending by file_size, breaking ties alphabetically by name.
  */
 export function sortDownloads(downloads: DownloadInfo[]): DownloadInfo[] {
   return downloads.sort((a, b) =>
-    (b.file_size || 0) - (a.file_size || 0) || a.name.localeCompare(b.name)
+    (b.file_size || 0) - (a.file_size || 0) ||
+    DOWNLOAD_NAME_COLLATOR.compare(a.name, b.name)
   );
 }

@@ -79,12 +79,13 @@ export function filterTroves(
         "https://www.humblebundle.com/",
       );
       const rawBaseName = decodeURIComponent(basename(placeholderUrl.pathname));
+      const compoundMatch = rawBaseName.match(/\.(tar\.(?:gz|bz2|xz))$/i);
+      const ext = compoundMatch ? `.${compoundMatch[1]}` : extname(rawBaseName);
 
       let fileName: string;
       let downloadPath: string;
       let filePath: string;
       if (options.outputTemplate) {
-        const ext = extname(rawBaseName);
         const isoDate = itemDate.toISOString().split("T")[0];
         const resolved = resolveOutputTemplate(
           resolvedDownloadFolder,
@@ -101,18 +102,23 @@ export function filterTroves(
             date: isoDate,
             gamekey: trove.machine_name,
             platform,
-            filename: rawBaseName,
+            filename: options.humanFileNames
+              ? `${sanitizedTroveName}${ext}`
+              : rawBaseName,
           },
         );
         fileName = resolved.fileName;
         downloadPath = resolved.downloadPath;
         filePath = resolved.filePath;
       } else {
-        fileName = sanitizeFilename(rawBaseName);
+        fileName = options.humanFileNames
+          ? `${sanitizedTroveName}${ext}`
+          : sanitizeFilename(rawBaseName);
         downloadPath = resolve(resolvedDownloadFolder, sanitizedTroveName);
         filePath = resolve(downloadPath, fileName);
       }
 
+      totals.preFilteredDownloads++;
       downloads.push({
         bundle: trove["human-name"],
         gameKey: trove.machine_name,

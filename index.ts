@@ -232,37 +232,45 @@ async function main(): Promise<void> {
     const processFile = (file: WalkEntry) => {
       checksumProgress.setTotal(checksumProgress.getTotal() + 1);
       queues.fileCheck.add(async () => {
-        const cacheKey = getChecksumCacheKey(
-          file.path,
-          file.name,
-          options.downloadFolder,
-        );
-        const existing = checksums[cacheKey] ?? checksums[file.name];
-        const st = await Deno.stat(file.path);
-        if (
-          !options.update &&
-          existing?.sha1 &&
-          existing?.md5 &&
-          (existing.verifiedSize === undefined ||
-            existing.verifiedSize === st.size)
-        ) {
-          if (cacheKey !== file.name && !checksums[cacheKey]) {
-            checksums[cacheKey] = existing;
+        try {
+          const cacheKey = getChecksumCacheKey(
+            file.path,
+            file.name,
+            options.downloadFolder,
+          );
+          const existing = checksums[cacheKey] ?? checksums[file.name];
+          const st = await Deno.stat(file.path);
+          if (
+            !options.update &&
+            existing?.sha1 &&
+            existing?.md5 &&
+            (existing.verifiedSize === undefined ||
+              existing.verifiedSize === st.size)
+          ) {
+            if (cacheKey !== file.name && !checksums[cacheKey]) {
+              checksums[cacheKey] = existing;
+            }
+            return;
           }
-          checksumProgress.increment();
-          return;
-        }
 
-        const computed = await checksum(file.path, progress, st.size);
-        checksums[cacheKey] = {
-          ...existing,
-          ...computed,
-          verifiedSize: st.size,
-          verifiedMtime: st.mtime?.getTime(),
-        };
-        totals.checksums++;
-        await maybeFlushChecksums();
-        checksumProgress.increment();
+          const computed = await checksum(file.path, progress, st.size);
+          checksums[cacheKey] = {
+            ...existing,
+            ...computed,
+            verifiedSize: st.size,
+            verifiedMtime: st.mtime?.getTime(),
+          };
+          totals.checksums++;
+          await maybeFlushChecksums();
+        } catch (err) {
+          progress.debug(
+            `Skipping checksum for ${file.path}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        } finally {
+          checksumProgress.increment();
+        }
       });
     };
 
@@ -287,10 +295,36 @@ async function main(): Promise<void> {
     }
   } else {
     if (command === COMMANDS.trove || command === COMMANDS.cleanupTrove) {
-      const previousTroves = !options.dryRun
+      const previousTroves = !options.dryRun || options.diff
         ? await readJsonFile<Trove[]>(options.downloadFolder, "troves.json")
         : undefined;
       const troves = await getAllTroves(options);
+      if (options.diff && Array.isArray(previousTroves)) {
+        const prevSet = new Set(previousTroves.map((t) => t.machine_name));
+        const currSet = new Set(troves.map((t) => t.machine_name));
+        const added = troves.filter((t) => !prevSet.has(t.machine_name));
+        const retired = previousTroves.filter(
+          (t) => !currSet.has(t.machine_name),
+        );
+        if (options.json) {
+          console.log(
+            JSON.stringify(
+              {
+                added: added.map((t) => t["human-name"]),
+                retired: retired.map((t) => t["human-name"]),
+              },
+              null,
+              2,
+            ),
+          );
+        } else {
+          progress.log(
+            `Trove diff: +${added.length} new, -${retired.length} retired`,
+          );
+          for (const t of added) progress.log(`  + ${t["human-name"]}`);
+          for (const t of retired) progress.log(`  - ${t["human-name"]}`);
+        }
+      }
       if (!options.dryRun) {
         if (Array.isArray(previousTroves) && previousTroves.length > 0) {
           const activeNames = new Set(troves.map((t) => t.machine_name));

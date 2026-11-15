@@ -412,19 +412,28 @@ export class SingleBarWrapper {
     }
 
     let text = "";
+    const baseTemplate = ` ${percent}% | ${elapsedStr}/${etaStr} | ${stats} |`;
     if (this.payload.file) {
-      text += ` "${this.payload.file}"`;
+      const maxFileLen = Math.max(
+        12,
+        width - stripAnsi(baseTemplate).length - 18,
+      );
+      const rawFile = String(this.payload.file);
+      const displayFile = rawFile.length > maxFileLen
+        ? `...${rawFile.slice(-(maxFileLen - 3))}`
+        : rawFile;
+      text = ` "${displayFile}"`;
     }
 
     // Bar drawing
     // [======    ] 100% | 00:12/00:24 | 10MB/20MB | "file"
     // Available space (use visible width without ANSI color codes)
-    const template =
-      ` ${percent}% | ${elapsedStr}/${etaStr} | ${stats} |${text}`;
+    const template = `${baseTemplate}${text}`;
     const visibleTemplateLen = stripAnsi(template).length;
     const barWidth = Math.max(width - visibleTemplateLen - 4, 10); // reserve space
-    const filled = Math.round(barWidth * (Math.min(pct, 1)));
-    const empty = barWidth - filled;
+    const clampedPct = Math.max(0, Math.min(pct, 1));
+    const filled = Math.round(barWidth * clampedPct);
+    const empty = Math.max(0, barWidth - filled);
 
     const barStr = `[${"=".repeat(filled)}${" ".repeat(empty)}]`;
 
